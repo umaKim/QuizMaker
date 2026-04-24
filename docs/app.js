@@ -109,6 +109,44 @@ function persistSettings() {
   localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(payload));
 }
 
+function renderQuestionCountOptions(totalQuestions) {
+  const candidates = [10, 20, 30, 50, 100, 150, 200, 300, 500];
+  const saved = readJSONStorage(STORAGE_KEYS.settings, null);
+  const preferred = saved?.count || "100";
+
+  elements.questionCount.innerHTML = "";
+  for (const count of candidates) {
+    if (count >= totalQuestions) continue;
+    const option = document.createElement("option");
+    option.value = String(count);
+    option.textContent = `${count}문항`;
+    elements.questionCount.appendChild(option);
+  }
+
+  if (totalQuestions > 0) {
+    const full = document.createElement("option");
+    full.value = String(totalQuestions);
+    full.textContent = `${totalQuestions}문항`;
+    elements.questionCount.appendChild(full);
+  }
+
+  const all = document.createElement("option");
+  all.value = "all";
+  all.textContent = "전체";
+  elements.questionCount.appendChild(all);
+
+  const validValues = new Set(
+    [...elements.questionCount.querySelectorAll("option")].map((option) => option.value),
+  );
+  elements.questionCount.value = validValues.has(preferred)
+    ? preferred
+    : validValues.has("100")
+      ? "100"
+      : validValues.has(String(totalQuestions))
+        ? String(totalQuestions)
+        : "all";
+}
+
 function persistWrongState() {
   localStorage.setItem(
     STORAGE_KEYS.wrongBank,
@@ -977,6 +1015,7 @@ async function init() {
 
     state.data = await response.json();
     createCourseModel();
+    renderQuestionCountOptions(state.data.totalQuestions);
     restoreSettings();
     updateModeUI();
     renderCourseFilters();

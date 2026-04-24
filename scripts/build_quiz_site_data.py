@@ -6,12 +6,30 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_FILE = ROOT / "markdown" / "투자자산운용사_예상문제_100선.md"
+BASE_SOURCE_FILE = ROOT / "markdown" / "투자자산운용사_예상문제_100선.md"
+GENERATED_BANK_FILE = ROOT / "markdown" / "투자자산운용사_확장_문제은행.md"
 OUTPUT_FILE = ROOT / "docs" / "data" / "questions.json"
 
 
 def normalize_spaces(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def clean_display_text(text: str) -> str:
+    text = text.replace("（", "(").replace("）", ")")
+    text = text.replace("“", '"').replace("”", '"').replace("’", "'")
+    text = re.sub(r"[★☆◦•▪◆◇□■△▽▶◀※]", " ", text)
+    text = re.sub(r"\b[FDQGC]+\b", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" -:;,")
+
+
+def shorten_text(text: str, limit: int) -> str:
+    text = normalize_spaces(clean_display_text(text))
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].strip()
+    return f"{cut}..."
 
 
 def parse_questions(question_text: str) -> list[dict]:
@@ -119,7 +137,11 @@ def parse_explanations(explanation_text: str) -> dict[int, dict]:
         block_lines: list[str] = []
         while i < len(lines):
             current = lines[i]
-            if re.match(r"^\d+\. 정답: [1-4]\s*$", current.strip()) or current.startswith("### ") or current.startswith("## "):
+            if (
+                re.match(r"^\d+\. 정답: [1-4]\s*$", current.strip())
+                or current.startswith("### ")
+                or current.startswith("## ")
+            ):
                 break
             if current.strip():
                 block_lines.append(current.strip())
@@ -150,7 +172,7 @@ def clean_topic_title(text: str) -> str:
     text = re.sub(r"\s*P\.\s*[0-9\-]+$", "", text)
     text = re.sub(r"[★☆◦•=＿_]+", " ", text)
     text = re.sub(r"\s+", " ", text)
-    return text.strip(" |-")
+    return clean_display_text(text.strip(" |-"))
 
 
 def compact_summary(lines: list[str], limit: int = 260) -> str:
@@ -247,7 +269,10 @@ def extract_topics_from_chapter(markdown_text: str) -> list[dict]:
         topics.append(
             {
                 "title": title,
-                "summary": compact_summary(summary_lines or [f"{title}의 정의, 구조, 핵심 포인트를 중심으로 정리한 챕터입니다."]),
+                "summary": compact_summary(
+                    summary_lines
+                    or [f"{title}의 정의, 구조, 핵심 포인트를 중심으로 정리한 챕터입니다."]
+                ),
                 "page": nearest_page(start_index),
             }
         )
@@ -292,9 +317,13 @@ def build_lessons(items: list[dict]) -> list[dict]:
                 "displayTitle": display_title,
                 "course": source_questions[0]["course"],
                 "chapter": source_questions[0]["chapter"],
-                "overview": extract_overview(markdown_text.splitlines(), topic_titles, source_questions[0]["chapter"]),
+                "overview": extract_overview(
+                    markdown_text.splitlines(), topic_titles, source_questions[0]["chapter"]
+                ),
                 "topics": topics,
-                "questionIds": [question["id"] for question in sorted(source_questions, key=lambda x: x["id"])],
+                "questionIds": [
+                    question["id"] for question in sorted(source_questions, key=lambda x: x["id"])
+                ],
                 "questionCount": len(source_questions),
             }
         )
@@ -303,16 +332,148 @@ def build_lessons(items: list[dict]) -> list[dict]:
     return lessons
 
 
-def build_payload() -> dict:
-    text = SOURCE_FILE.read_text(encoding="utf-8")
+def unique_topic_pool(topics: list[dict]) -> list[dict]:
+    pool: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for topic in topics:
+        key = (topic["source"], topic["title"])
+        if key in seen:
+            continue
+        seen.add(key)
+        pool.append(topic)
+    return pool
+
+
+def gather_topic_context(lessons: list[dict]) -> list[dict]:
+    contexts: list[dict] = []
+    for lesson in lessons:
+        lesson_key = f"{lesson['course']} / {lesson['chapter']}"
+        for index, topic in enumerate(lesson["topics"]):
+            title = shorten_text(topic["title"], 54)
+            summary = shorten_text(topic["summary"], 110)
+            if len(title) < 2 or len(summary) < 18:
+                continue
+            contexts.append(
+                {
+                    "lessonKey": lesson_key,
+                    "course": lesson["course"],
+                    "chapter": lesson["chapter"],
+                    "displayTitle": lesson["displayTitle"],
+                    "source": lesson["source"],
+                    "page": topic.get("page", ""),
+                    "topicIndex": index,
+                    "title": title,
+                    "summary": summary,
+                }
+            )
+    return contexts
+
+
+def select_other_topics(target: dict, all_topics: list[dict], count: int) -> list[dict]:
+    same_lesson = [
+        topic
+        for topic in all_topics
+        if topic["lessonKey"] == target["lessonKey"] and topic["title"] != target["title"]
+    ]
+    same_course = [
+        topic
+        for topic in all_topics
+        if topic["course"] == target["course"]
+        and topic["lessonKey"] != target["lessonKey"]
+        and topic["title"] != target["title"]
+    ]
+    others = [
+        topic
+        for topic in all_topics
+        if topic["course"] != target["course"] and topic["title"] != target["title"]
+    ]
+
+    ordered = unique_topic_pool(same_lesson + same_course + others)
+    return ordered[:count]
+
+
+def build_options(correct: str, distractors: list[str], seed: int) -> tuple[list[str], int]:
+    picked = [shorten_text(item, 96) for item in distractors[:3]]
+    options = picked[:]
+    answer_index = seed % 4
+    options.insert(answer_index, shorten_text(correct, 96))
+    while len(options) < 4:
+        options.append("해당 사항 없음")
+    return options[:4], answer_index + 1
+
+
+def generated_explanation(topic: dict) -> str:
+    page = f" PDF {topic['page']}쪽 부근에서" if topic.get("page") else ""
+    return (
+        f"{topic['title']}는 {topic['chapter']} 챕터에서{page} "
+        f"{topic['summary']}를 중심으로 정리되는 개념이다."
+    )
+
+
+def generate_supplemental_questions(lessons: list[dict], start_id: int) -> list[dict]:
+    all_topics = gather_topic_context(lessons)
+    supplemental: list[dict] = []
+    next_id = start_id
+
+    for topic in all_topics:
+        distractor_topics = select_other_topics(topic, all_topics, 3)
+        if len(distractor_topics) < 3:
+            continue
+
+        title_options, title_answer = build_options(
+            topic["title"],
+            [candidate["title"] for candidate in distractor_topics],
+            seed=next_id,
+        )
+        supplemental.append(
+            {
+                "id": next_id,
+                "course": topic["course"],
+                "chapter": topic["chapter"],
+                "prompt": (
+                    "다음 설명과 가장 관련된 개념으로 가장 적절한 것은? "
+                    f"{topic['summary']}"
+                ),
+                "options": title_options,
+                "answer": title_answer,
+                "explanation": generated_explanation(topic),
+                "source": topic["source"],
+            }
+        )
+        next_id += 1
+
+        summary_options, summary_answer = build_options(
+            topic["summary"],
+            [candidate["summary"] for candidate in distractor_topics],
+            seed=next_id,
+        )
+        supplemental.append(
+            {
+                "id": next_id,
+                "course": topic["course"],
+                "chapter": topic["chapter"],
+                "prompt": f"다음 중 {topic['title']}에 대한 설명으로 가장 적절한 것은?",
+                "options": summary_options,
+                "answer": summary_answer,
+                "explanation": generated_explanation(topic),
+                "source": topic["source"],
+            }
+        )
+        next_id += 1
+
+    return supplemental
+
+
+def merge_base_questions() -> list[dict]:
+    text = BASE_SOURCE_FILE.read_text(encoding="utf-8")
     question_part, explanation_part = text.split("## 정답 및 풀이", 1)
     questions = parse_questions(question_part)
     explanations = parse_explanations(explanation_part)
 
-    if len(questions) != 100:
-        raise ValueError(f"Expected 100 questions, got {len(questions)}")
-    if len(explanations) != 100:
-        raise ValueError(f"Expected 100 explanations, got {len(explanations)}")
+    if len(questions) != len(explanations):
+        raise ValueError(
+            f"Question count and explanation count mismatch: {len(questions)} vs {len(explanations)}"
+        )
 
     items = []
     for question in questions:
@@ -320,6 +481,17 @@ def build_payload() -> dict:
         if extra is None:
             raise ValueError(f"Missing explanation for question {question['id']}")
         items.append({**question, **extra})
+    return items
+
+
+def build_payload() -> dict:
+    base_items = merge_base_questions()
+    seed_lessons = build_lessons(base_items)
+    supplemental_items = generate_supplemental_questions(
+        seed_lessons,
+        start_id=max(item["id"] for item in base_items) + 1,
+    )
+    items = base_items + supplemental_items
 
     course_counts: dict[str, int] = {}
     chapter_counts: dict[str, int] = {}
@@ -331,8 +503,10 @@ def build_payload() -> dict:
     lessons = build_lessons(items)
 
     return {
-        "title": "투자자산운용사 예상문제 100선",
-        "description": "기존 chapter markdown을 바탕으로 정리한 100문항 퀴즈 세트",
+        "title": "투자자산운용사 확장 문제은행",
+        "description": "기존 chapter markdown과 기본 100문항을 바탕으로 확장한 다문항 퀴즈 세트",
+        "baseQuestionCount": len(base_items),
+        "generatedQuestionCount": len(supplemental_items),
         "totalQuestions": len(items),
         "courseCounts": course_counts,
         "chapterCounts": chapter_counts,
@@ -342,14 +516,66 @@ def build_payload() -> dict:
     }
 
 
+def render_question_markdown(items: list[dict], title: str, description: str) -> str:
+    lines = [f"# {title}", "", f"- 설명: {description}", "- 형식: 객관식 4지선다", ""]
+
+    current_course = None
+    current_chapter = None
+    for item in items:
+        if item["course"] != current_course:
+            current_course = item["course"]
+            current_chapter = None
+            lines.append(f"## {current_course}")
+            lines.append("")
+
+        if item["chapter"] != current_chapter:
+            current_chapter = item["chapter"]
+            lines.append(f"### {current_chapter}")
+            lines.append("")
+
+        lines.append(f"{item['id']}. {item['prompt']}")
+        for index, option in enumerate(item["options"], start=1):
+            lines.append(f"   {index}. {option}")
+        lines.append("")
+
+    lines.extend(["## 정답 및 풀이", ""])
+
+    for item in items:
+        lines.append(f"{item['id']}. 정답: {item['answer']}")
+        lines.append(
+            f"풀이: {item['explanation']} 근거: `{item['source']}`"
+        )
+        lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
+
+
 def main() -> None:
     payload = build_payload()
+    items = sorted(payload["questions"], key=lambda question: question["id"])
+
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print(f"Wrote {payload['totalQuestions']} questions to {OUTPUT_FILE}")
+
+    GENERATED_BANK_FILE.write_text(
+        render_question_markdown(
+            items,
+            title=payload["title"],
+            description=payload["description"],
+        ),
+        encoding="utf-8",
+    )
+
+    print(
+        "Wrote "
+        f"{payload['totalQuestions']} questions "
+        f"({payload['baseQuestionCount']} base + {payload['generatedQuestionCount']} generated) "
+        f"to {OUTPUT_FILE}"
+    )
+    print(f"Wrote markdown bank to {GENERATED_BANK_FILE}")
 
 
 if __name__ == "__main__":

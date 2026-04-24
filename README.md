@@ -8,12 +8,13 @@
 - `docs/styles.css`: UI 스타일
 - `docs/app.js`: 퀴즈 로직
 - `docs/data/questions.json`: 웹앱이 읽는 문제 데이터
-- `scripts/build_quiz_site_data.py`: 문제 md를 JSON으로 변환하는 스크립트
-- `markdown/투자자산운용사_예상문제_100선.md`: 문제 원본
+- `scripts/build_quiz_site_data.py`: 기본 문제와 chapter md를 바탕으로 확장 문제은행을 생성하는 스크립트
+- `markdown/투자자산운용사_예상문제_100선.md`: 기본 100문항 원본
+- `markdown/투자자산운용사_확장_문제은행.md`: 생성된 확장 문제은행
 
 ## 데이터 다시 생성하기
 
-문제 md를 수정한 뒤 아래 명령으로 웹용 JSON을 다시 생성합니다.
+문제 md나 chapter md를 수정한 뒤 아래 명령으로 웹용 JSON과 확장형 문제은행 md를 다시 생성합니다.
 
 ```bash
 python3 scripts/build_quiz_site_data.py
@@ -42,5 +43,7 @@ python3 -m http.server 4173 --directory docs
 - 문제 수 선택
 - 문항 순서 섞기
 - 오답만 다시 풀기
+- 챕터별 핵심 개념 학습
 - 정답, 풀이, 출처 chapter 표시
 - 로컬 오답 보관함(localStorage)
+- 오답노트 저장 및 해결 상태 관리

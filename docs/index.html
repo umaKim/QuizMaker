@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>투자자산운용사 퀴즈 랩</title>
+    <meta
+      name="description"
+      content="투자자산운용사 예상문제 100선을 GitHub Pages에서 풀 수 있는 퀴즈 사이트"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Cormorant+Garamond:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-aura"></div>
+    <div class="page-grid"></div>
+    <div class="shell">
+      <header class="hero panel">
+        <div class="eyebrow">GitHub Pages Quiz Site</div>
+        <div class="hero-row">
+          <div>
+            <h1>투자자산운용사 퀴즈 랩</h1>
+            <p class="hero-copy">
+              과목별 출제 비중에 맞춘 100문항을 시험처럼 풀거나,
+              해설과 근거를 바로 확인하면서 학습할 수 있는 개인용 웹사이트입니다.
+            </p>
+          </div>
+          <div class="hero-stats">
+            <div class="stat-card">
+              <span class="stat-label">문항 수</span>
+              <strong id="hero-total">100</strong>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">오답 보관함</span>
+              <strong id="hero-wrong-count">0</strong>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">세션 정확도</span>
+              <strong id="hero-accuracy">-</strong>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="sidebar panel">
+          <section class="sidebar-section">
+            <div class="section-label">모드</div>
+            <div class="segmented" id="mode-picker">
+              <button class="segment active" data-mode="study" type="button">학습 모드</button>
+              <button class="segment" data-mode="exam" type="button">시험 모드</button>
+            </div>
+          </section>
+
+          <section class="sidebar-section">
+            <div class="section-label">문항 수</div>
+            <div class="select-wrap">
+              <select id="question-count">
+                <option value="10">10문항</option>
+                <option value="20">20문항</option>
+                <option value="50">50문항</option>
+                <option value="100" selected>100문항</option>
+                <option value="all">전체</option>
+              </select>
+            </div>
+          </section>
+
+          <section class="sidebar-section">
+            <div class="section-label">세션 옵션</div>
+            <label class="switch">
+              <input id="shuffle-toggle" type="checkbox" checked />
+              <span>문항 순서 섞기</span>
+            </label>
+            <label class="switch">
+              <input id="wrong-only-toggle" type="checkbox" />
+              <span>오답만 다시 풀기</span>
+            </label>
+          </section>
+
+          <section class="sidebar-section">
+            <div class="section-head">
+              <div class="section-label">과목 필터</div>
+              <button id="select-all-courses" class="ghost-button" type="button">전체 선택</button>
+            </div>
+            <div id="course-filters" class="chip-cloud"></div>
+          </section>
+
+          <section class="sidebar-section">
+            <div class="section-head">
+              <div class="section-label">챕터 필터</div>
+              <div class="actions-inline">
+                <button id="select-all-chapters" class="ghost-button" type="button">전체</button>
+                <button id="clear-all-chapters" class="ghost-button" type="button">해제</button>
+              </div>
+            </div>
+            <div id="chapter-filters" class="chapter-list"></div>
+          </section>
+
+          <section class="sidebar-section sidebar-footer">
+            <button id="start-quiz" class="primary-button" type="button">세션 시작</button>
+            <button id="reset-storage" class="secondary-button" type="button">오답 기록 초기화</button>
+          </section>
+        </aside>
+
+        <main class="main panel">
+          <section id="loading-view" class="center-view">
+            <p class="loading-title">데이터를 불러오는 중입니다.</p>
+            <p class="loading-copy">문항과 해설을 정리한 JSON을 읽고 있습니다.</p>
+          </section>
+
+          <section id="empty-view" class="center-view hidden">
+            <p class="loading-title">선택된 조건에 맞는 문항이 없습니다.</p>
+            <p class="loading-copy">과목, 챕터, 오답 필터를 조정한 뒤 다시 시작하세요.</p>
+          </section>
+
+          <section id="welcome-view" class="welcome-view hidden">
+            <div class="welcome-block">
+              <div class="welcome-eyebrow">Study Like an Operator</div>
+              <h2>문항을 고르고 바로 시작할 수 있습니다.</h2>
+              <p>
+                왼쪽에서 과목과 챕터를 고르면 한 문제씩 답안을 제출하고,
+                정답과 풀이, 출처 chapter를 바로 확인할 수 있습니다.
+              </p>
+            </div>
+            <div class="welcome-panels">
+              <article class="mini-panel">
+                <span>학습 모드</span>
+                <strong>정답 확인 후 바로 해설</strong>
+                <p>암기보다 이해 확인이 필요할 때 적합합니다.</p>
+              </article>
+              <article class="mini-panel">
+                <span>시험 모드</span>
+                <strong>집중해서 한 세션 완주</strong>
+                <p>실전처럼 점수와 정확도를 확인할 수 있습니다.</p>
+              </article>
+              <article class="mini-panel">
+                <span>오답 보관함</span>
+                <strong>틀린 문제만 다시</strong>
+                <p>세션 간에 로컬에 저장되어 반복 학습이 가능합니다.</p>
+              </article>
+            </div>
+          </section>
+
+          <section id="quiz-view" class="quiz-view hidden">
+            <div class="quiz-topbar">
+              <div class="progress-copy">
+                <div class="question-index" id="question-index">1 / 10</div>
+                <div class="question-meta" id="question-meta">제1과목 / 세제관련법규</div>
+              </div>
+              <div class="score-copy">
+                <span>정답 <strong id="score-correct">0</strong></span>
+                <span>오답 <strong id="score-wrong">0</strong></span>
+              </div>
+            </div>
+            <div class="progress-track">
+              <div id="progress-bar" class="progress-bar"></div>
+            </div>
+
+            <article class="question-card">
+              <div class="question-badge" id="question-badge">Question 1</div>
+              <h2 id="question-prompt" class="question-prompt"></h2>
+              <div id="options" class="options"></div>
+            </article>
+
+            <article id="explanation-card" class="explanation-card hidden">
+              <div class="answer-pill" id="answer-pill">정답 1번</div>
+              <p id="explanation-text" class="explanation-text"></p>
+              <div id="source-chip" class="source-chip"></div>
+            </article>
+
+            <div class="quiz-actions">
+              <button id="check-answer" class="primary-button" type="button">정답 확인</button>
+              <button id="next-question" class="secondary-button hidden" type="button">다음 문제</button>
+              <button id="finish-quiz" class="ghost-button" type="button">세션 종료</button>
+            </div>
+          </section>
+
+          <section id="result-view" class="result-view hidden">
+            <div class="result-hero">
+              <div class="welcome-eyebrow">Session Complete</div>
+              <h2 id="result-score">0 / 0</h2>
+              <p id="result-summary"></p>
+            </div>
+            <div class="result-grid">
+              <article class="mini-panel">
+                <span>정확도</span>
+                <strong id="result-accuracy">0%</strong>
+              </article>
+              <article class="mini-panel">
+                <span>오답 수</span>
+                <strong id="result-wrong">0</strong>
+              </article>
+              <article class="mini-panel">
+                <span>선택 필터</span>
+                <strong id="result-filter-summary">전체 범위</strong>
+              </article>
+            </div>
+            <div class="result-breakdown">
+              <h3>과목별 결과</h3>
+              <div id="result-course-breakdown" class="breakdown-list"></div>
+            </div>
+            <div class="quiz-actions">
+              <button id="retry-wrong" class="primary-button" type="button">오답만 다시 풀기</button>
+              <button id="restart-quiz" class="secondary-button" type="button">새 세션 설정</button>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

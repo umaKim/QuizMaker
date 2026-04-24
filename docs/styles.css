@@ -380,13 +380,14 @@ select {
 }
 
 .question-index {
-  font-size: 1.65rem;
+  font-size: 1.28rem;
   font-weight: 700;
 }
 
 .question-meta,
 .score-copy {
   color: var(--muted);
+  font-size: 0.92rem;
 }
 
 .score-copy {
@@ -419,7 +420,9 @@ select {
 
 .question-prompt {
   margin-top: 12px;
-  font-size: clamp(2rem, 4vw, 3.15rem);
+  font-size: clamp(1.34rem, 2.15vw, 1.92rem);
+  line-height: 1.36;
+  letter-spacing: -0.01em;
 }
 
 .options {
@@ -438,6 +441,8 @@ select {
   cursor: pointer;
   position: relative;
   transition: 180ms ease;
+  font-size: 0.98rem;
+  line-height: 1.58;
 }
 
 .choice-number {
@@ -557,6 +562,11 @@ select {
   .sidebar,
   .main {
     padding: 18px;
+  }
+
+  .question-prompt {
+    font-size: 1.18rem;
+    line-height: 1.42;
   }
 
   .question-card,

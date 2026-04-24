@@ -31,8 +31,8 @@ python3 -m http.server 4173 --directory docs
 
 1. 이 폴더를 GitHub 저장소에 올립니다.
 2. 저장소 Settings > Pages로 이동합니다.
-3. Build and deployment의 Source를 `Deploy from a branch`로 설정합니다.
-4. 브랜치는 `main`, 폴더는 `/docs`를 선택합니다.
+3. Build and deployment의 Source를 `GitHub Actions`로 설정합니다.
+4. 이 저장소에는 `.github/workflows/deploy-pages.yml`이 포함되어 있으므로 이후 `main` 브랜치 푸시마다 자동 배포됩니다.
 5. 저장하면 몇 분 뒤 Pages URL이 열립니다.
 
 ## 기능

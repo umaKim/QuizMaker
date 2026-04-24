@@ -332,136 +332,279 @@ def build_lessons(items: list[dict]) -> list[dict]:
     return lessons
 
 
-def unique_topic_pool(topics: list[dict]) -> list[dict]:
-    pool: list[dict] = []
-    seen: set[tuple[str, str]] = set()
-    for topic in topics:
-        key = (topic["source"], topic["title"])
-        if key in seen:
-            continue
-        seen.add(key)
-        pool.append(topic)
-    return pool
+STANDARD_OPTION_MAP = {
+    "①": 1,
+    "②": 2,
+    "③": 3,
+    "④": 4,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+}
+
+OCR_OPTION_MAP = {
+    "©": 3,
+    "㈢": 3,
+    "®": 3,
+    "@": 4,
+    "Q": 4,
+    "¥": 4,
+}
 
 
-def gather_topic_context(lessons: list[dict]) -> list[dict]:
-    contexts: list[dict] = []
-    for lesson in lessons:
-        lesson_key = f"{lesson['course']} / {lesson['chapter']}"
-        for index, topic in enumerate(lesson["topics"]):
-            title = shorten_text(topic["title"], 54)
-            summary = shorten_text(topic["summary"], 110)
-            if len(title) < 2 or len(summary) < 18:
+def clean_ocr_line(text: str) -> str:
+    text = clean_display_text(text)
+    text = re.sub(r"[•∙·⋅]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def parse_option_prefix(line: str, expected_next: int | None = None) -> tuple[int | None, str | None]:
+    stripped = line.strip()
+    if not stripped:
+        return None, None
+
+    token = stripped[0]
+    if token in STANDARD_OPTION_MAP:
+        return STANDARD_OPTION_MAP[token], clean_ocr_line(stripped[1:])
+    if token in OCR_OPTION_MAP:
+        return OCR_OPTION_MAP[token], clean_ocr_line(stripped[1:])
+
+    match = re.match(r"^\(?([1-4])\)?[.)]?\s*(.+)$", stripped)
+    if match:
+        return int(match.group(1)), clean_ocr_line(match.group(2))
+
+    if expected_next and token in {"©", "®", "@", "Q", "¥"}:
+        return expected_next, clean_ocr_line(stripped[1:])
+
+    return None, None
+
+
+def parse_answer_prefix(text: str) -> tuple[int | None, str]:
+    stripped = text.strip()
+    if not stripped:
+        return None, ""
+
+    token = stripped[0]
+    if token in STANDARD_OPTION_MAP:
+        return STANDARD_OPTION_MAP[token], clean_ocr_line(stripped[1:])
+
+    match = re.match(r"^([1-4])\s*(.+)$", stripped)
+    if match:
+        return int(match.group(1)), clean_ocr_line(match.group(2))
+
+    return None, clean_ocr_line(stripped)
+
+
+def normalize_question_key(item: dict) -> str:
+    key = f"{item['course']}|{item['chapter']}|{item['prompt']}"
+    key = re.sub(r"\W+", "", key)
+    return key.lower()
+
+
+def extract_code_blocks(markdown_text: str) -> list[str]:
+    return re.findall(r"```text\n(.*?)```", markdown_text, flags=re.S)
+
+
+def finalize_question(question: dict | None) -> dict | None:
+    if not question:
+        return None
+
+    prompt = clean_ocr_line(" ".join(question["prompt_parts"]))
+    if len(prompt) < 10:
+        return None
+
+    options = []
+    for number in range(1, 5):
+        option = clean_ocr_line(question["options"].get(number, ""))
+        if not option:
+            return None
+        options.append(option)
+
+    return {
+        "number": question["number"],
+        "prompt": prompt,
+        "options": options,
+    }
+
+
+def is_quality_question(item: dict) -> bool:
+    prompt = item["prompt"]
+    options = item["options"]
+    explanation = item["explanation"]
+
+    forbidden_prompt_patterns = [
+        r"[①②③④©®@¥]",
+        r"제\d+과목",
+        r"정답 및 해설",
+        r"PDF 페이지",
+        r"-{4,}",
+        r"\b\d{2}\s+.+\?",
+    ]
+    forbidden_option_patterns = [
+        r"제\d+과목",
+        r"정답 및 해설",
+        r"PDF 페이지",
+        r"부록",
+        r"[©®@¥]",
+        r"-{4,}",
+        r"\b\d{2}\s+[가-힣A-Za-z]",
+    ]
+
+    if len(prompt) < 10 or len(prompt) > 220:
+        return False
+    if len(explanation) < 5:
+        return False
+
+    for pattern in forbidden_prompt_patterns:
+        if re.search(pattern, prompt):
+            return False
+
+    for option in options:
+        if len(option) < 2 or len(option) > 160:
+            return False
+        for pattern in forbidden_option_patterns:
+            if re.search(pattern, option):
+                return False
+        normalized = re.sub(r"[^0-9A-Za-z가-힣%./+-]", "", option)
+        if len(normalized) < 3:
+            return False
+
+    return True
+
+
+def extract_chapter_review_questions(source: str, course: str, chapter: str) -> list[dict]:
+    chapter_file = ROOT / "markdown" / source
+    markdown_text = chapter_file.read_text(encoding="utf-8")
+    code_blocks = extract_code_blocks(markdown_text)
+
+    start_index = next((idx for idx, block in enumerate(code_blocks) if "CHAPTER" in block), None)
+    if start_index is None:
+        return []
+
+    lines: list[str] = []
+    for block in code_blocks[start_index:]:
+        for raw in block.splitlines():
+            stripped = raw.strip()
+            if not stripped:
                 continue
-            contexts.append(
-                {
-                    "lessonKey": lesson_key,
-                    "course": lesson["course"],
-                    "chapter": lesson["chapter"],
-                    "displayTitle": lesson["displayTitle"],
-                    "source": lesson["source"],
-                    "page": topic.get("page", ""),
-                    "topicIndex": index,
-                    "title": title,
-                    "summary": summary,
-                }
-            )
-    return contexts
+            if stripped == "CHAPTER":
+                continue
+            if stripped.startswith("제") and ("장" in stripped or "과목" in stripped or "부록" in stripped):
+                continue
+            lines.append(raw.rstrip())
 
+    batches: list[tuple[list[dict], dict[int, dict]]] = []
+    mode = "questions"
+    questions: list[dict] = []
+    answers: dict[int, dict] = {}
+    current_question: dict | None = None
+    current_option: int | None = None
+    current_answer_no: int | None = None
 
-def select_other_topics(target: dict, all_topics: list[dict], count: int) -> list[dict]:
-    same_lesson = [
-        topic
-        for topic in all_topics
-        if topic["lessonKey"] == target["lessonKey"] and topic["title"] != target["title"]
-    ]
-    same_course = [
-        topic
-        for topic in all_topics
-        if topic["course"] == target["course"]
-        and topic["lessonKey"] != target["lessonKey"]
-        and topic["title"] != target["title"]
-    ]
-    others = [
-        topic
-        for topic in all_topics
-        if topic["course"] != target["course"] and topic["title"] != target["title"]
-    ]
+    def flush_question() -> None:
+        nonlocal current_question, current_option
+        finalized = finalize_question(current_question)
+        if finalized:
+            questions.append(finalized)
+        current_question = None
+        current_option = None
 
-    ordered = unique_topic_pool(same_lesson + same_course + others)
-    return ordered[:count]
+    def flush_batch() -> None:
+        nonlocal questions, answers, current_answer_no
+        flush_question()
+        if questions and answers:
+            batches.append((questions, answers))
+        questions = []
+        answers = {}
+        current_answer_no = None
 
-
-def build_options(correct: str, distractors: list[str], seed: int) -> tuple[list[str], int]:
-    picked = [shorten_text(item, 96) for item in distractors[:3]]
-    options = picked[:]
-    answer_index = seed % 4
-    options.insert(answer_index, shorten_text(correct, 96))
-    while len(options) < 4:
-        options.append("해당 사항 없음")
-    return options[:4], answer_index + 1
-
-
-def generated_explanation(topic: dict) -> str:
-    page = f" PDF {topic['page']}쪽 부근에서" if topic.get("page") else ""
-    return (
-        f"{topic['title']}는 {topic['chapter']} 챕터에서{page} "
-        f"{topic['summary']}를 중심으로 정리되는 개념이다."
-    )
-
-
-def generate_supplemental_questions(lessons: list[dict], start_id: int) -> list[dict]:
-    all_topics = gather_topic_context(lessons)
-    supplemental: list[dict] = []
-    next_id = start_id
-
-    for topic in all_topics:
-        distractor_topics = select_other_topics(topic, all_topics, 3)
-        if len(distractor_topics) < 3:
+    for raw in lines:
+        line = raw.strip()
+        if line == "정답 및 해설":
+            flush_question()
+            mode = "answers"
+            current_answer_no = None
             continue
 
-        title_options, title_answer = build_options(
-            topic["title"],
-            [candidate["title"] for candidate in distractor_topics],
-            seed=next_id,
-        )
-        supplemental.append(
-            {
-                "id": next_id,
-                "course": topic["course"],
-                "chapter": topic["chapter"],
-                "prompt": (
-                    "다음 설명과 가장 관련된 개념으로 가장 적절한 것은? "
-                    f"{topic['summary']}"
-                ),
-                "options": title_options,
-                "answer": title_answer,
-                "explanation": generated_explanation(topic),
-                "source": topic["source"],
-            }
-        )
-        next_id += 1
+        if mode == "questions":
+            question_match = re.match(r"^(\d{2})\s+(.+)$", line)
+            option_no, option_text = parse_option_prefix(line, expected_next=current_option + 1 if current_option else 1)
+            if question_match and option_no is None:
+                flush_question()
+                current_question = {
+                    "number": int(question_match.group(1)),
+                    "prompt_parts": [clean_ocr_line(question_match.group(2))],
+                    "options": {},
+                }
+                current_option = None
+                continue
 
-        summary_options, summary_answer = build_options(
-            topic["summary"],
-            [candidate["summary"] for candidate in distractor_topics],
-            seed=next_id,
-        )
-        supplemental.append(
-            {
-                "id": next_id,
-                "course": topic["course"],
-                "chapter": topic["chapter"],
-                "prompt": f"다음 중 {topic['title']}에 대한 설명으로 가장 적절한 것은?",
-                "options": summary_options,
-                "answer": summary_answer,
-                "explanation": generated_explanation(topic),
-                "source": topic["source"],
-            }
-        )
-        next_id += 1
+            if current_question and option_no is not None and option_text:
+                current_question["options"][option_no] = option_text
+                current_option = option_no
+                continue
 
-    return supplemental
+            if current_question and current_option is not None:
+                current_question["options"][current_option] = clean_ocr_line(
+                    f"{current_question['options'][current_option]} {line}"
+                )
+                continue
+
+            if current_question:
+                current_question["prompt_parts"].append(clean_ocr_line(line))
+            continue
+
+        answer_match = re.match(r"^(\d{2})\s+(.+)$", line)
+        if answer_match:
+            answer_no = int(answer_match.group(1))
+            answer_value, remainder = parse_answer_prefix(answer_match.group(2))
+            if answer_value is not None:
+                answers[answer_no] = {
+                    "answer": answer_value,
+                    "explanation_parts": [remainder] if remainder else [],
+                }
+                current_answer_no = answer_no
+                continue
+
+            flush_batch()
+            mode = "questions"
+            current_question = {
+                "number": answer_no,
+                "prompt_parts": [clean_ocr_line(answer_match.group(2))],
+                "options": {},
+            }
+            current_option = None
+            continue
+
+        if current_answer_no is not None:
+            answers[current_answer_no]["explanation_parts"].append(clean_ocr_line(line))
+
+    flush_batch()
+
+    items: list[dict] = []
+    for question_batch, answer_batch in batches:
+        for question in question_batch:
+            answer_info = answer_batch.get(question["number"])
+            if not answer_info:
+                continue
+            explanation = clean_ocr_line(" ".join(answer_info["explanation_parts"]))
+            if len(explanation) < 5:
+                continue
+            candidate = {
+                "course": course,
+                "chapter": chapter,
+                "prompt": question["prompt"],
+                "options": question["options"],
+                "answer": answer_info["answer"],
+                "explanation": explanation,
+                "source": source,
+            }
+            if is_quality_question(candidate):
+                items.append(candidate)
+
+    return items
 
 
 def merge_base_questions() -> list[dict]:
@@ -484,14 +627,34 @@ def merge_base_questions() -> list[dict]:
     return items
 
 
+def extract_real_question_bank(base_items: list[dict], start_id: int) -> list[dict]:
+    source_map: dict[str, tuple[str, str]] = {}
+    for item in base_items:
+        source_map.setdefault(item["source"], (item["course"], item["chapter"]))
+
+    existing_keys = {normalize_question_key(item) for item in base_items}
+    extracted: list[dict] = []
+    next_id = start_id
+
+    for source, (course, chapter) in source_map.items():
+        for item in extract_chapter_review_questions(source, course, chapter):
+            item_key = normalize_question_key(item)
+            if item_key in existing_keys:
+                continue
+            existing_keys.add(item_key)
+            extracted.append({**item, "id": next_id})
+            next_id += 1
+
+    return extracted
+
+
 def build_payload() -> dict:
     base_items = merge_base_questions()
-    seed_lessons = build_lessons(base_items)
-    supplemental_items = generate_supplemental_questions(
-        seed_lessons,
+    extracted_items = extract_real_question_bank(
+        base_items,
         start_id=max(item["id"] for item in base_items) + 1,
     )
-    items = base_items + supplemental_items
+    items = base_items + extracted_items
 
     course_counts: dict[str, int] = {}
     chapter_counts: dict[str, int] = {}
@@ -504,9 +667,10 @@ def build_payload() -> dict:
 
     return {
         "title": "투자자산운용사 확장 문제은행",
-        "description": "기존 chapter markdown과 기본 100문항을 바탕으로 확장한 다문항 퀴즈 세트",
+        "description": "기존 chapter markdown의 실제 문제와 기본 100문항을 합친 확장 문제은행",
         "baseQuestionCount": len(base_items),
-        "generatedQuestionCount": len(supplemental_items),
+        "generatedQuestionCount": 0,
+        "extractedQuestionCount": len(extracted_items),
         "totalQuestions": len(items),
         "courseCounts": course_counts,
         "chapterCounts": chapter_counts,

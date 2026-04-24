@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 
-ROOT = Path("/Users/uma/Documents/GitHub/QuizMaker")
+ROOT = Path(__file__).resolve().parent.parent
 SOURCE_FILE = ROOT / "markdown" / "투자자산운용사_예상문제_100선.md"
 OUTPUT_FILE = ROOT / "docs" / "data" / "questions.json"
 

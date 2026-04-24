@@ -6,7 +6,7 @@ from pathlib import Path
 from pypdf import PdfReader
 
 
-ROOT = Path("/Users/uma/Documents/GitHub/QuizMaker")
+ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_ROOT = ROOT / "markdown"
 
 

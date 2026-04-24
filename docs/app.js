@@ -98,6 +98,7 @@ function readJSONStorage(key, fallback) {
 
 function persistSettings() {
   const payload = {
+    version: 2,
     mode: state.mode,
     count: elements.questionCount.value,
     shuffle: elements.shuffleToggle.checked,
@@ -112,7 +113,7 @@ function persistSettings() {
 function renderQuestionCountOptions(totalQuestions) {
   const candidates = [10, 20, 30, 50, 100, 150, 200, 300, 500];
   const saved = readJSONStorage(STORAGE_KEYS.settings, null);
-  const preferred = saved?.count || "100";
+  const preferred = saved?.count || "all";
 
   elements.questionCount.innerHTML = "";
   for (const count of candidates) {
@@ -132,18 +133,23 @@ function renderQuestionCountOptions(totalQuestions) {
 
   const all = document.createElement("option");
   all.value = "all";
-  all.textContent = "전체";
+  all.textContent = `전체 문제은행 (${totalQuestions}문항)`;
   elements.questionCount.appendChild(all);
 
   const validValues = new Set(
     [...elements.questionCount.querySelectorAll("option")].map((option) => option.value),
   );
-  elements.questionCount.value = validValues.has(preferred)
-    ? preferred
-    : validValues.has("100")
-      ? "100"
-      : validValues.has(String(totalQuestions))
-        ? String(totalQuestions)
+  const shouldMigrateLegacy100 =
+    saved &&
+    saved.version !== 2 &&
+    saved.count === "100" &&
+    totalQuestions > 100;
+
+  elements.questionCount.value =
+    shouldMigrateLegacy100
+      ? "all"
+      : validValues.has(preferred)
+        ? preferred
         : "all";
 }
 

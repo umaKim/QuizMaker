@@ -1,5 +1,6 @@
 const STORAGE_KEYS = {
   wrongBank: "quizmaker-wrong-bank",
+  wrongNotebook: "quizmaker-wrong-notebook",
   settings: "quizmaker-settings",
 };
 
@@ -7,11 +8,16 @@ const state = {
   data: null,
   courses: [],
   chapters: [],
+  lessons: [],
+  lessonMap: new Map(),
+  questionMap: new Map(),
   selectedCourses: new Set(),
   selectedChapters: new Set(),
   wrongBank: new Set(),
+  wrongNotebook: new Map(),
   session: null,
   mode: "study",
+  activeLessonKey: null,
 };
 
 const elements = {
@@ -22,6 +28,10 @@ const elements = {
   questionCount: document.querySelector("#question-count"),
   shuffleToggle: document.querySelector("#shuffle-toggle"),
   wrongOnlyToggle: document.querySelector("#wrong-only-toggle"),
+  lessonSelect: document.querySelector("#lesson-select"),
+  openLesson: document.querySelector("#open-lesson"),
+  startLessonQuiz: document.querySelector("#start-lesson-quiz"),
+  openNotebook: document.querySelector("#open-notebook"),
   courseFilters: document.querySelector("#course-filters"),
   chapterFilters: document.querySelector("#chapter-filters"),
   selectAllCourses: document.querySelector("#select-all-courses"),
@@ -32,8 +42,21 @@ const elements = {
   loadingView: document.querySelector("#loading-view"),
   emptyView: document.querySelector("#empty-view"),
   welcomeView: document.querySelector("#welcome-view"),
+  lessonView: document.querySelector("#lesson-view"),
   quizView: document.querySelector("#quiz-view"),
   resultView: document.querySelector("#result-view"),
+  notebookView: document.querySelector("#notebook-view"),
+  lessonTitle: document.querySelector("#lesson-title"),
+  lessonOverview: document.querySelector("#lesson-overview"),
+  lessonMeta: document.querySelector("#lesson-meta"),
+  lessonTopicList: document.querySelector("#lesson-topic-list"),
+  lessonStartQuiz: document.querySelector("#lesson-start-quiz"),
+  lessonOpenNotebook: document.querySelector("#lesson-open-notebook"),
+  lessonBackHome: document.querySelector("#lesson-back-home"),
+  notebookSummary: document.querySelector("#notebook-summary"),
+  notebookList: document.querySelector("#notebook-list"),
+  notebookReviewAll: document.querySelector("#notebook-review-all"),
+  notebookBackHome: document.querySelector("#notebook-back-home"),
   questionIndex: document.querySelector("#question-index"),
   questionMeta: document.querySelector("#question-meta"),
   scoreCorrect: document.querySelector("#score-correct"),
@@ -59,6 +82,11 @@ const elements = {
   restartQuiz: document.querySelector("#restart-quiz"),
 };
 
+const timeFormatter = new Intl.DateTimeFormat("ko-KR", {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
 function readJSONStorage(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -76,14 +104,23 @@ function persistSettings() {
     wrongOnly: elements.wrongOnlyToggle.checked,
     courses: [...state.selectedCourses],
     chapters: [...state.selectedChapters],
+    activeLessonKey: state.activeLessonKey,
   };
   localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(payload));
 }
 
-function persistWrongBank() {
+function persistWrongState() {
   localStorage.setItem(
     STORAGE_KEYS.wrongBank,
     JSON.stringify([...state.wrongBank].sort((a, b) => a - b)),
+  );
+  localStorage.setItem(
+    STORAGE_KEYS.wrongNotebook,
+    JSON.stringify(
+      [...state.wrongNotebook.values()].sort((a, b) =>
+        String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")),
+      ),
+    ),
   );
   updateHeroStats();
 }
@@ -97,50 +134,75 @@ function shuffle(array) {
   return copy;
 }
 
-function getChapterKey(question) {
-  return `${question.course} / ${question.chapter}`;
+function getChapterKey(item) {
+  return `${item.course} / ${item.chapter}`;
+}
+
+function getVisibleLessons() {
+  return state.lessons.filter((lesson) => state.selectedCourses.has(lesson.course));
 }
 
 function createCourseModel() {
   const courseMap = new Map();
+  const chapterCounts = new Map();
+
   for (const question of state.data.questions) {
+    const chapterKey = getChapterKey(question);
     if (!courseMap.has(question.course)) {
       courseMap.set(question.course, new Set());
     }
-    courseMap.get(question.course).add(getChapterKey(question));
+    courseMap.get(question.course).add(chapterKey);
+    chapterCounts.set(chapterKey, (chapterCounts.get(chapterKey) || 0) + 1);
   }
+
   state.courses = [...courseMap.keys()];
+  state.lessons = (state.data.lessons || []).map((lesson) => ({
+    ...lesson,
+    key: getChapterKey(lesson),
+  }));
+  state.lessonMap = new Map(state.lessons.map((lesson) => [lesson.key, lesson]));
+  state.questionMap = new Map(state.data.questions.map((question) => [question.id, question]));
+
   state.chapters = state.data.questions.reduce((acc, question) => {
     const key = getChapterKey(question);
     if (acc.some((entry) => entry.key === key)) return acc;
+    const lesson = state.lessonMap.get(key);
     acc.push({
       key,
       course: question.course,
       chapter: question.chapter,
+      displayTitle: lesson?.displayTitle || question.chapter,
+      questionCount: chapterCounts.get(key) || 0,
     });
     return acc;
   }, []);
 }
 
 function restoreSettings() {
-  state.wrongBank = new Set(readJSONStorage(STORAGE_KEYS.wrongBank, []));
+  const savedWrongBank = readJSONStorage(STORAGE_KEYS.wrongBank, []);
+  state.wrongBank = new Set(
+    savedWrongBank.filter((id) => Number.isInteger(id) && state.questionMap.has(id)),
+  );
 
-  const saved = readJSONStorage(STORAGE_KEYS.settings, null);
-  if (!saved) {
-    state.mode = "study";
-    state.selectedCourses = new Set(state.courses);
-    state.selectedChapters = new Set(state.chapters.map((entry) => entry.key));
-    return;
+  const notebookRaw = readJSONStorage(STORAGE_KEYS.wrongNotebook, []);
+  state.wrongNotebook = new Map();
+  for (const record of notebookRaw) {
+    if (!record || !Number.isInteger(record.id) || !state.questionMap.has(record.id)) continue;
+    state.wrongNotebook.set(record.id, record);
+    if (!record.resolved) {
+      state.wrongBank.add(record.id);
+    }
   }
 
-  state.mode = saved.mode === "exam" ? "exam" : "study";
-  elements.questionCount.value = saved.count || "100";
-  elements.shuffleToggle.checked = saved.shuffle ?? true;
-  elements.wrongOnlyToggle.checked = saved.wrongOnly ?? false;
+  const saved = readJSONStorage(STORAGE_KEYS.settings, null);
+  state.mode = saved?.mode === "exam" ? "exam" : "study";
+  elements.questionCount.value = saved?.count || "100";
+  elements.shuffleToggle.checked = saved?.shuffle ?? true;
+  elements.wrongOnlyToggle.checked = saved?.wrongOnly ?? false;
 
   const validCourses = new Set(state.courses);
   state.selectedCourses = new Set(
-    (saved.courses || []).filter((course) => validCourses.has(course)),
+    (saved?.courses || []).filter((course) => validCourses.has(course)),
   );
   if (state.selectedCourses.size === 0) {
     state.selectedCourses = new Set(state.courses);
@@ -148,10 +210,18 @@ function restoreSettings() {
 
   const validChapters = new Set(state.chapters.map((entry) => entry.key));
   state.selectedChapters = new Set(
-    (saved.chapters || []).filter((chapter) => validChapters.has(chapter)),
+    (saved?.chapters || []).filter((chapter) => validChapters.has(chapter)),
   );
   if (state.selectedChapters.size === 0) {
     state.selectedChapters = new Set(state.chapters.map((entry) => entry.key));
+  }
+
+  const visibleLessons = getVisibleLessons();
+  const lessonKeys = new Set(state.lessons.map((lesson) => lesson.key));
+  if (saved?.activeLessonKey && lessonKeys.has(saved.activeLessonKey)) {
+    state.activeLessonKey = saved.activeLessonKey;
+  } else {
+    state.activeLessonKey = visibleLessons[0]?.key || state.lessons[0]?.key || null;
   }
 }
 
@@ -205,8 +275,14 @@ function renderCourseFilters() {
         state.selectedChapters = visibleChapterKeys;
       }
 
+      const visibleLessons = getVisibleLessons();
+      if (!visibleLessons.some((lesson) => lesson.key === state.activeLessonKey)) {
+        state.activeLessonKey = visibleLessons[0]?.key || null;
+      }
+
       renderCourseFilters();
       renderChapterFilters();
+      renderLessonSelect();
       persistSettings();
     });
     elements.courseFilters.appendChild(button);
@@ -242,12 +318,47 @@ function renderChapterFilters() {
     course.textContent = entry.course;
     const chapter = document.createElement("div");
     chapter.textContent = entry.chapter;
+    const meta = document.createElement("div");
+    meta.className = "chapter-meta";
+    meta.textContent = `${entry.questionCount}문항`;
 
-    textWrap.append(course, chapter);
+    textWrap.append(course, chapter, meta);
     label.append(checkbox, textWrap);
     wrapper.appendChild(label);
     elements.chapterFilters.appendChild(wrapper);
   }
+}
+
+function renderLessonSelect() {
+  const visibleLessons = getVisibleLessons();
+  elements.lessonSelect.innerHTML = "";
+
+  if (visibleLessons.length === 0) {
+    const option = document.createElement("option");
+    option.textContent = "선택 가능한 챕터가 없습니다.";
+    option.value = "";
+    elements.lessonSelect.appendChild(option);
+    elements.lessonSelect.disabled = true;
+    elements.openLesson.disabled = true;
+    elements.startLessonQuiz.disabled = true;
+    return;
+  }
+
+  if (!visibleLessons.some((lesson) => lesson.key === state.activeLessonKey)) {
+    state.activeLessonKey = visibleLessons[0].key;
+  }
+
+  for (const lesson of visibleLessons) {
+    const option = document.createElement("option");
+    option.value = lesson.key;
+    option.textContent = `${lesson.displayTitle} · ${lesson.questionCount}문항`;
+    option.selected = lesson.key === state.activeLessonKey;
+    elements.lessonSelect.appendChild(option);
+  }
+
+  elements.lessonSelect.disabled = false;
+  elements.openLesson.disabled = false;
+  elements.startLessonQuiz.disabled = false;
 }
 
 function showView(view) {
@@ -255,35 +366,55 @@ function showView(view) {
     elements.loadingView,
     elements.emptyView,
     elements.welcomeView,
+    elements.lessonView,
     elements.quizView,
     elements.resultView,
+    elements.notebookView,
   ]) {
     section.classList.add("hidden");
   }
   view.classList.remove("hidden");
 }
 
-function getFilteredQuestions({ wrongOnly = elements.wrongOnlyToggle.checked } = {}) {
+function getFilteredQuestions({
+  wrongOnly = elements.wrongOnlyToggle.checked,
+  chapterKeys = null,
+  questionIds = null,
+} = {}) {
+  const chapterSet = chapterKeys ? new Set(chapterKeys) : null;
+  const idSet = questionIds ? new Set(questionIds) : null;
+
   return state.data.questions.filter((question) => {
     const chapterKey = getChapterKey(question);
-    if (!state.selectedCourses.has(question.course)) return false;
-    if (!state.selectedChapters.has(chapterKey)) return false;
+    if (idSet && !idSet.has(question.id)) return false;
+    if (chapterSet && !chapterSet.has(chapterKey)) return false;
+
+    if (!idSet && !chapterSet) {
+      if (!state.selectedCourses.has(question.course)) return false;
+      if (!state.selectedChapters.has(chapterKey)) return false;
+    }
+
     if (wrongOnly && !state.wrongBank.has(question.id)) return false;
     return true;
   });
 }
 
-function buildSession({ wrongOnly = elements.wrongOnlyToggle.checked } = {}) {
-  let questions = getFilteredQuestions({ wrongOnly });
+function buildSession({
+  wrongOnly = elements.wrongOnlyToggle.checked,
+  chapterKeys = null,
+  questionIds = null,
+  useAll = false,
+  filterSummary = "",
+} = {}) {
+  let questions = getFilteredQuestions({ wrongOnly, chapterKeys, questionIds });
   if (questions.length === 0) return null;
 
-  if (elements.shuffleToggle.checked) {
+  if (elements.shuffleToggle.checked && questions.length > 1) {
     questions = shuffle(questions);
   }
 
-  const countValue = elements.questionCount.value;
-  if (countValue !== "all") {
-    const count = Number(countValue);
+  if (!useAll && elements.questionCount.value !== "all") {
+    const count = Number(elements.questionCount.value);
     questions = questions.slice(0, count);
   }
 
@@ -296,6 +427,7 @@ function buildSession({ wrongOnly = elements.wrongOnlyToggle.checked } = {}) {
     correctCount: 0,
     wrongCount: 0,
     startedWithWrongOnly: wrongOnly,
+    filterSummary,
   };
 }
 
@@ -366,6 +498,49 @@ function renderQuestion() {
   updateHeroStats();
 }
 
+function updateWrongNotebook(question, selectedChoice, isCorrect) {
+  const now = new Date().toISOString();
+  const existing = state.wrongNotebook.get(question.id);
+
+  if (isCorrect) {
+    state.wrongBank.delete(question.id);
+    if (existing) {
+      state.wrongNotebook.set(question.id, {
+        ...existing,
+        selectedChoice,
+        selectedOption: question.options[selectedChoice - 1] || "",
+        resolved: true,
+        resolvedAt: now,
+        updatedAt: now,
+        lastResult: "correct",
+      });
+    }
+    persistWrongState();
+    return;
+  }
+
+  state.wrongBank.add(question.id);
+  state.wrongNotebook.set(question.id, {
+    id: question.id,
+    course: question.course,
+    chapter: question.chapter,
+    prompt: question.prompt,
+    selectedChoice,
+    selectedOption: question.options[selectedChoice - 1] || "",
+    correctAnswer: question.answer,
+    correctOption: question.options[question.answer - 1] || "",
+    explanation: question.explanation,
+    source: question.source,
+    attempts: (existing?.attempts || 0) + 1,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    resolved: false,
+    resolvedAt: null,
+    lastResult: "wrong",
+  });
+  persistWrongState();
+}
+
 function gradeCurrentQuestion() {
   if (!state.session || state.session.revealed) return;
   if (state.session.selectedChoice == null) {
@@ -385,13 +560,11 @@ function gradeCurrentQuestion() {
 
   if (isCorrect) {
     state.session.correctCount += 1;
-    state.wrongBank.delete(question.id);
   } else {
     state.session.wrongCount += 1;
-    state.wrongBank.add(question.id);
   }
 
-  persistWrongBank();
+  updateWrongNotebook(question, state.session.selectedChoice, isCorrect);
   state.session.revealed = true;
   renderQuestion();
 }
@@ -418,13 +591,15 @@ function renderResults() {
   elements.resultScore.textContent = `${state.session.correctCount} / ${total}`;
   elements.resultSummary.textContent =
     state.mode === "exam"
-      ? "시험 모드 세션이 종료되었습니다. 과목별 약점을 확인하고 오답만 다시 풀 수 있습니다."
-      : "학습 모드 세션이 종료되었습니다. 해설을 확인한 문제들을 기반으로 오답 보관함이 갱신되었습니다.";
+      ? "시험 모드 세션이 종료되었습니다. 과목별 약점을 확인하고 오답을 다시 풀 수 있습니다."
+      : "학습 모드 세션이 종료되었습니다. 틀린 문제는 오답노트에 저장되고, 다시 맞힌 문제는 해결됨으로 표시됩니다.";
   elements.resultAccuracy.textContent = `${accuracy}%`;
   elements.resultWrong.textContent = String(state.session.wrongCount);
-  elements.resultFilterSummary.textContent = state.session.startedWithWrongOnly
-    ? "오답 보관함 기준"
-    : `${state.selectedCourses.size}개 과목 / ${state.selectedChapters.size}개 챕터`;
+  elements.resultFilterSummary.textContent = state.session.filterSummary || (
+    state.session.startedWithWrongOnly
+      ? "오답 보관함 기준"
+      : `${state.selectedCourses.size}개 과목 / ${state.selectedChapters.size}개 챕터`
+  );
 
   const breakdown = new Map();
   for (const answer of state.session.answers) {
@@ -457,8 +632,20 @@ function finishSession() {
   showView(elements.resultView);
 }
 
-function startSession({ wrongOnly = elements.wrongOnlyToggle.checked } = {}) {
-  const session = buildSession({ wrongOnly });
+function startSession({
+  wrongOnly = elements.wrongOnlyToggle.checked,
+  chapterKeys = null,
+  questionIds = null,
+  useAll = false,
+  filterSummary = "",
+} = {}) {
+  const session = buildSession({
+    wrongOnly,
+    chapterKeys,
+    questionIds,
+    useAll,
+    filterSummary,
+  });
   if (!session) {
     showView(elements.emptyView);
     return;
@@ -470,6 +657,179 @@ function startSession({ wrongOnly = elements.wrongOnlyToggle.checked } = {}) {
   renderQuestion();
 }
 
+function renderLessonView() {
+  const lesson = state.lessonMap.get(state.activeLessonKey);
+  if (!lesson) {
+    showView(elements.emptyView);
+    return;
+  }
+
+  elements.lessonSelect.value = lesson.key;
+  elements.lessonTitle.textContent = lesson.displayTitle;
+  elements.lessonOverview.textContent = lesson.overview;
+
+  elements.lessonMeta.innerHTML = "";
+  for (const text of [
+    lesson.course,
+    `핵심 개념 ${lesson.topics.length}개`,
+    `관련 문제 ${lesson.questionCount}문항`,
+    lesson.source ? `출처 ${lesson.source}` : "",
+  ]) {
+    if (!text) continue;
+    const badge = document.createElement("div");
+    badge.className = "lesson-meta-chip";
+    badge.textContent = text;
+    elements.lessonMeta.appendChild(badge);
+  }
+
+  elements.lessonTopicList.innerHTML = "";
+  for (const topic of lesson.topics) {
+    const card = document.createElement("article");
+    card.className = "lesson-topic-card";
+
+    const head = document.createElement("div");
+    head.className = "lesson-topic-head";
+
+    const title = document.createElement("h3");
+    title.textContent = topic.title;
+    head.appendChild(title);
+
+    if (topic.page) {
+      const page = document.createElement("span");
+      page.className = "topic-page";
+      page.textContent = `PDF ${topic.page}p`;
+      head.appendChild(page);
+    }
+
+    const summary = document.createElement("p");
+    summary.textContent = topic.summary;
+
+    card.append(head, summary);
+    elements.lessonTopicList.appendChild(card);
+  }
+
+  showView(elements.lessonView);
+}
+
+function formatTimestamp(value) {
+  if (!value) return "";
+  try {
+    return timeFormatter.format(new Date(value));
+  } catch {
+    return "";
+  }
+}
+
+function renderNotebookView() {
+  const records = [...state.wrongNotebook.values()].sort((a, b) => {
+    if (a.resolved !== b.resolved) return a.resolved ? 1 : -1;
+    return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+  });
+
+  const unresolvedCount = records.filter((record) => !record.resolved).length;
+  const resolvedCount = records.length - unresolvedCount;
+
+  elements.notebookSummary.innerHTML = "";
+  for (const text of [
+    `미해결 ${unresolvedCount}`,
+    `해결됨 ${resolvedCount}`,
+    `누적 ${records.length}`,
+  ]) {
+    const badge = document.createElement("div");
+    badge.className = "lesson-meta-chip";
+    badge.textContent = text;
+    elements.notebookSummary.appendChild(badge);
+  }
+
+  elements.notebookList.innerHTML = "";
+  if (records.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-note";
+    empty.textContent = "아직 저장된 오답이 없습니다. 문제를 풀면서 틀린 항목이 여기에 누적됩니다.";
+    elements.notebookList.appendChild(empty);
+    showView(elements.notebookView);
+    return;
+  }
+
+  for (const record of records) {
+    const card = document.createElement("article");
+    card.className = "notebook-card";
+
+    const top = document.createElement("div");
+    top.className = "notebook-card-top";
+
+    const status = document.createElement("span");
+    status.className = `notebook-status ${record.resolved ? "resolved" : "active"}`;
+    status.textContent = record.resolved ? "해결됨" : "미해결";
+
+    const meta = document.createElement("div");
+    meta.className = "notebook-card-meta";
+    meta.textContent = `${record.course} / ${record.chapter} · ${formatTimestamp(record.updatedAt)}`;
+
+    top.append(status, meta);
+
+    const title = document.createElement("h3");
+    title.textContent = record.prompt;
+
+    const answer = document.createElement("p");
+    answer.className = "notebook-copy";
+    answer.textContent = `내 답 ${record.selectedChoice}번 · 정답 ${record.correctAnswer}번`;
+
+    const detail = document.createElement("p");
+    detail.className = "notebook-copy";
+    detail.textContent = `오답 이유: ${record.explanation}`;
+
+    const aux = document.createElement("p");
+    aux.className = "notebook-aux";
+    aux.textContent = `시도 ${record.attempts || 1}회${record.source ? ` · 근거 ${record.source}` : ""}`;
+
+    const actions = document.createElement("div");
+    actions.className = "quiz-actions";
+
+    const retryButton = document.createElement("button");
+    retryButton.type = "button";
+    retryButton.className = "secondary-button";
+    retryButton.textContent = "이 문제 다시 풀기";
+    retryButton.addEventListener("click", () => {
+      startSession({
+        questionIds: [record.id],
+        useAll: true,
+        filterSummary: "오답노트 단일 문제",
+      });
+    });
+
+    const conceptButton = document.createElement("button");
+    conceptButton.type = "button";
+    conceptButton.className = "ghost-button";
+    conceptButton.textContent = "관련 개념 보기";
+    conceptButton.addEventListener("click", () => {
+      state.activeLessonKey = getChapterKey(record);
+      persistSettings();
+      renderLessonView();
+    });
+
+    actions.append(retryButton, conceptButton);
+    card.append(top, title, answer, detail, aux, actions);
+    elements.notebookList.appendChild(card);
+  }
+
+  showView(elements.notebookView);
+}
+
+function startLessonQuiz() {
+  const lesson = state.lessonMap.get(state.activeLessonKey);
+  if (!lesson) {
+    alert("먼저 학습할 챕터를 선택하세요.");
+    return;
+  }
+
+  startSession({
+    questionIds: lesson.questionIds,
+    useAll: true,
+    filterSummary: `${lesson.displayTitle} 관련 문제`,
+  });
+}
+
 function attachEvents() {
   elements.modePicker.addEventListener("click", (event) => {
     const button = event.target.closest("[data-mode]");
@@ -479,11 +839,60 @@ function attachEvents() {
     persistSettings();
   });
 
+  elements.lessonSelect.addEventListener("change", () => {
+    state.activeLessonKey = elements.lessonSelect.value;
+    persistSettings();
+  });
+
+  elements.openLesson.addEventListener("click", () => {
+    state.activeLessonKey = elements.lessonSelect.value;
+    persistSettings();
+    renderLessonView();
+  });
+
+  elements.startLessonQuiz.addEventListener("click", () => {
+    state.activeLessonKey = elements.lessonSelect.value;
+    persistSettings();
+    startLessonQuiz();
+  });
+
+  elements.openNotebook.addEventListener("click", renderNotebookView);
+  elements.lessonStartQuiz.addEventListener("click", startLessonQuiz);
+  elements.lessonOpenNotebook.addEventListener("click", renderNotebookView);
+  elements.lessonBackHome.addEventListener("click", () => {
+    state.session = null;
+    updateHeroStats();
+    showView(elements.welcomeView);
+  });
+
+  elements.notebookReviewAll.addEventListener("click", () => {
+    if (state.wrongBank.size === 0) {
+      alert("현재 미해결 오답이 없습니다.");
+      return;
+    }
+    elements.wrongOnlyToggle.checked = true;
+    startSession({
+      wrongOnly: true,
+      useAll: true,
+      filterSummary: "오답노트 전체 복습",
+    });
+  });
+
+  elements.notebookBackHome.addEventListener("click", () => {
+    state.session = null;
+    updateHeroStats();
+    showView(elements.welcomeView);
+  });
+
   elements.selectAllCourses.addEventListener("click", () => {
     state.selectedCourses = new Set(state.courses);
     state.selectedChapters = new Set(state.chapters.map((entry) => entry.key));
+    if (!state.activeLessonKey) {
+      state.activeLessonKey = state.lessons[0]?.key || null;
+    }
     renderCourseFilters();
     renderChapterFilters();
+    renderLessonSelect();
     persistSettings();
   });
 
@@ -508,8 +917,16 @@ function attachEvents() {
   elements.finishQuiz.addEventListener("click", finishSession);
 
   elements.retryWrong.addEventListener("click", () => {
+    if (state.wrongBank.size === 0) {
+      alert("현재 미해결 오답이 없습니다.");
+      return;
+    }
     elements.wrongOnlyToggle.checked = true;
-    startSession({ wrongOnly: true });
+    startSession({
+      wrongOnly: true,
+      useAll: true,
+      filterSummary: "오답 보관함 기준",
+    });
   });
 
   elements.restartQuiz.addEventListener("click", () => {
@@ -520,9 +937,11 @@ function attachEvents() {
 
   elements.resetStorage.addEventListener("click", () => {
     state.wrongBank.clear();
-    persistWrongBank();
+    state.wrongNotebook.clear();
+    persistWrongState();
     elements.wrongOnlyToggle.checked = false;
-    alert("오답 기록을 비웠습니다.");
+    renderNotebookView();
+    alert("오답 기록과 오답노트를 비웠습니다.");
   });
 
   elements.questionCount.addEventListener("change", persistSettings);
@@ -562,6 +981,7 @@ async function init() {
     updateModeUI();
     renderCourseFilters();
     renderChapterFilters();
+    renderLessonSelect();
     updateHeroStats();
     showView(elements.welcomeView);
   } catch (error) {

@@ -83,6 +83,21 @@
           </section>
 
           <section class="sidebar-section">
+            <div class="section-label">챕터 학습</div>
+            <p class="section-copy">
+              미리 정리된 chapter md를 기준으로 핵심 개념을 먼저 보고, 바로 해당 챕터 문제를 풀 수 있습니다.
+            </p>
+            <div class="select-wrap">
+              <select id="lesson-select"></select>
+            </div>
+            <div class="stacked-actions">
+              <button id="open-lesson" class="primary-button" type="button">개념 학습 열기</button>
+              <button id="start-lesson-quiz" class="secondary-button" type="button">이 챕터 문제 풀기</button>
+              <button id="open-notebook" class="ghost-button" type="button">오답노트 보기</button>
+            </div>
+          </section>
+
+          <section class="sidebar-section">
             <div class="section-head">
               <div class="section-label">과목 필터</div>
               <button id="select-all-courses" class="ghost-button" type="button">전체 선택</button>
@@ -143,6 +158,28 @@
                 <strong>틀린 문제만 다시</strong>
                 <p>세션 간에 로컬에 저장되어 반복 학습이 가능합니다.</p>
               </article>
+              <article class="mini-panel">
+                <span>챕터 학습</span>
+                <strong>개념 설명 후 관련 문제 풀이</strong>
+                <p>chapter md를 요약한 핵심 개념 카드와 연계 문제를 바로 볼 수 있습니다.</p>
+              </article>
+            </div>
+          </section>
+
+          <section id="lesson-view" class="lesson-view hidden">
+            <div class="lesson-head">
+              <div>
+                <div class="welcome-eyebrow">Chapter Lesson</div>
+                <h2 id="lesson-title">챕터 개념 학습</h2>
+                <p id="lesson-overview" class="lesson-overview"></p>
+              </div>
+              <div class="lesson-meta" id="lesson-meta"></div>
+            </div>
+            <div id="lesson-topic-list" class="lesson-topic-list"></div>
+            <div class="quiz-actions">
+              <button id="lesson-start-quiz" class="primary-button" type="button">관련 문제 풀기</button>
+              <button id="lesson-open-notebook" class="secondary-button" type="button">오답노트 보기</button>
+              <button id="lesson-back-home" class="ghost-button" type="button">홈으로</button>
             </div>
           </section>
 
@@ -208,6 +245,24 @@
               <button id="retry-wrong" class="primary-button" type="button">오답만 다시 풀기</button>
               <button id="restart-quiz" class="secondary-button" type="button">새 세션 설정</button>
             </div>
+          </section>
+
+          <section id="notebook-view" class="notebook-view hidden">
+            <div class="lesson-head">
+              <div>
+                <div class="welcome-eyebrow">Wrong Answer Notebook</div>
+                <h2>오답노트</h2>
+                <p class="lesson-overview">
+                  틀린 문제를 저장해 두고, 다시 맞히면 해결됨으로 표시합니다.
+                </p>
+              </div>
+              <div class="notebook-summary" id="notebook-summary"></div>
+            </div>
+            <div class="quiz-actions">
+              <button id="notebook-review-all" class="primary-button" type="button">오답 전체 다시 풀기</button>
+              <button id="notebook-back-home" class="secondary-button" type="button">홈으로</button>
+            </div>
+            <div id="notebook-list" class="notebook-list"></div>
           </section>
         </main>
       </div>

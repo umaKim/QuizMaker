@@ -4,11 +4,21 @@ import json
 import re
 from pathlib import Path
 
+from pypdf import PdfReader
+
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE_SOURCE_FILE = ROOT / "markdown" / "투자자산운용사_예상문제_100선.md"
 GENERATED_BANK_FILE = ROOT / "markdown" / "투자자산운용사_확장_문제은행.md"
 OUTPUT_FILE = ROOT / "docs" / "data" / "questions.json"
+MOCK_EXAM_1_FILE = ROOT / "markdown" / "book2" / "10_최종모의고사_제1회.md"
+MOCK_EXAM_2_FILE = ROOT / "markdown" / "book2" / "11_최종모의고사_제2회.md"
+MOCK_ANSWER_FILE = ROOT / "markdown" / "book2" / "12_정답_및_해설.md"
+CALC_NOTE_PDF = ROOT / "[600dpi] 계산문제 특강노트_ocr.pdf"
+INLINE_SKIP_SOURCES = {
+    "book1/01_세제관련법규_세무전략.md",
+    "book1/02_금융상품.md",
+}
 
 
 def normalize_spaces(text: str) -> str:
@@ -22,6 +32,13 @@ def clean_display_text(text: str) -> str:
     text = re.sub(r"\b[FDQGC]+\b", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip(" -:;,")
+
+
+def clean_question_prompt(text: str) -> str:
+    cleaned = clean_display_text(text)
+    cleaned = re.sub(r"\s*[#eEoO]{2,}$", "", cleaned)
+    cleaned = re.sub(r"\s*[.…]+$", "", cleaned)
+    return cleaned.strip()
 
 
 def shorten_text(text: str, limit: int) -> str:
@@ -345,6 +362,7 @@ STANDARD_OPTION_MAP = {
 
 OCR_OPTION_MAP = {
     "©": 3,
+    "⊙": 3,
     "㈢": 3,
     "®": 3,
     "@": 4,
@@ -360,8 +378,42 @@ def clean_ocr_line(text: str) -> str:
     return text.strip()
 
 
+def normalize_question_number_prefix(line: str) -> str:
+    match = re.match(r"^([0-9])\s+([0-9])(\s+.+)$", line.strip())
+    if match:
+        return f"{match.group(1)}{match.group(2)}{match.group(3)}"
+    return line
+
+
+def extract_option_entries(line: str) -> tuple[str, list[tuple[int, str]]]:
+    cleaned = clean_ocr_line(normalize_question_number_prefix(line))
+    if not cleaned:
+        return "", []
+
+    matches = list(re.finditer(r"[①②③④©⊙㈢®@Q¥]", cleaned))
+    if matches:
+        prefix = cleaned[: matches[0].start()].strip()
+        entries: list[tuple[int, str]] = []
+        for index, match in enumerate(matches):
+            number = map_answer_token(match.group(0))
+            if number is None:
+                continue
+            start = match.end()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(cleaned)
+            text = clean_ocr_line(cleaned[start:end])
+            if text:
+                entries.append((number, text))
+        return prefix, entries
+
+    numeric_match = re.match(r"^[-:;\s]*\(?([1-4])\)?[.)]?\s*(.+)$", cleaned)
+    if numeric_match:
+        return "", [(int(numeric_match.group(1)), clean_ocr_line(numeric_match.group(2)))]
+
+    return cleaned, []
+
+
 def parse_option_prefix(line: str, expected_next: int | None = None) -> tuple[int | None, str | None]:
-    stripped = line.strip()
+    stripped = normalize_question_number_prefix(line).strip()
     if not stripped:
         return None, None
 
@@ -382,7 +434,7 @@ def parse_option_prefix(line: str, expected_next: int | None = None) -> tuple[in
 
 
 def parse_answer_prefix(text: str) -> tuple[int | None, str]:
-    stripped = text.strip()
+    stripped = normalize_question_number_prefix(text).strip()
     if not stripped:
         return None, ""
 
@@ -403,15 +455,125 @@ def normalize_question_key(item: dict) -> str:
     return key.lower()
 
 
+def detect_inline_answer(line: str) -> tuple[int | None, str]:
+    cleaned = clean_ocr_line(normalize_question_number_prefix(line))
+    if not cleaned:
+        return None, ""
+
+    match = re.match(
+        r"^(?:\d{2}\s+)?(?:[A-Za-z가-힣$#*]+(?:\s+[A-Za-z가-힣$#*]+)*)?\s*([①②③④©⊙㈢®@Q¥]|\(\d\)|[1-4])(?:\s+|$)(.*)$",
+        cleaned,
+    )
+    if not match:
+        return None, cleaned
+
+    answer = map_answer_token(match.group(1))
+    remainder = clean_ocr_line(match.group(2))
+    return answer, remainder
+
+
+def trim_explanation_text(text: str, limit: int = 420) -> str:
+    trimmed = re.split(r"더 알아보기|핵심이론|합격률을 높이는 보충문제", text, maxsplit=1)[0]
+    return shorten_text(trimmed, limit)
+
+
+def is_high_confidence_inline_question(item: dict) -> bool:
+    prompt = item["prompt"]
+    options = item["options"]
+    explanation = item["explanation"]
+
+    if prompt.endswith("O") or prompt.startswith("더 알아보기"):
+        return False
+    if any(len(option) > 95 for option in options):
+        return False
+    if any(re.search(r"핵심이론|더 알아보기|PDF 페이지", option) for option in options):
+        return False
+    if re.search(r"핵심이론|더 알아보기|PDF 페이지", explanation):
+        return False
+    if not re.search(r"(옳|틀린|적절|것은|무엇|설명|연결|빈칸|해당|거리가 먼)", prompt):
+        return False
+
+    return is_quality_question(item)
+
+
+def infer_answer_from_explanation(options: list[str], explanation: str) -> int | None:
+    cleaned = clean_ocr_line(explanation)
+    explicit_match = re.match(r"^([①②③④©⊙㈢®@Q¥]|\(\d\)|[1-4])(?:\s|은|는|이|가)", cleaned)
+    if explicit_match:
+        return map_answer_token(explicit_match.group(1))
+
+    normalized_explanation = re.sub(r"[^0-9A-Za-z가-힣]", "", cleaned)
+    scores: list[tuple[int, int]] = []
+    for index, option in enumerate(options, start=1):
+        normalized_option = re.sub(r"[^0-9A-Za-z가-힣]", "", option)
+        if not normalized_option:
+            scores.append((index, 0))
+            continue
+        if normalized_option and normalized_option in normalized_explanation:
+            scores.append((index, 100))
+            continue
+        tokens = [token for token in re.findall(r"[0-9A-Za-z가-힣]+", normalized_option) if len(token) >= 2]
+        score = sum(1 for token in tokens if token in normalized_explanation)
+        scores.append((index, score))
+
+    best_index, best_score = max(scores, key=lambda item: item[1])
+    if best_score < 1:
+        return None
+    if sum(1 for _, score in scores if score == best_score) > 1:
+        return None
+    return best_index
+
+
 def extract_code_blocks(markdown_text: str) -> list[str]:
     return re.findall(r"```text\n(.*?)```", markdown_text, flags=re.S)
+
+
+def parse_question_block(block: str) -> tuple[str, list[str]] | None:
+    prompt_parts: list[str] = []
+    options: dict[int, str] = {}
+    current_option: int | None = None
+
+    for raw in block.splitlines():
+        line = clean_ocr_line(normalize_question_number_prefix(raw))
+        if not line:
+            continue
+
+        if not prompt_parts and not options:
+            line = re.sub(r"^\d{2}(?:-\d+)?\s*", "", line).strip()
+
+        prefix, entries = extract_option_entries(line)
+        if entries:
+            if prefix:
+                if options and current_option is not None:
+                    options[current_option] = clean_ocr_line(f"{options[current_option]} {prefix}")
+                else:
+                    prompt_parts.append(prefix)
+            for number, text in entries:
+                options[number] = text
+                current_option = number
+            continue
+
+        if options and len(options) < 4 and current_option is not None:
+            options[current_option] = clean_ocr_line(f"{options[current_option]} {line}")
+        elif not options:
+            prompt_parts.append(line)
+
+    if len(options) < 4:
+        return None
+
+    prompt = clean_question_prompt(" ".join(prompt_parts))
+    ordered_options = [clean_ocr_line(options.get(index, "")) for index in range(1, 5)]
+    if len(prompt) < 8 or any(not option for option in ordered_options):
+        return None
+
+    return prompt, ordered_options
 
 
 def finalize_question(question: dict | None) -> dict | None:
     if not question:
         return None
 
-    prompt = clean_ocr_line(" ".join(question["prompt_parts"]))
+    prompt = clean_question_prompt(" ".join(question["prompt_parts"]))
     if len(prompt) < 10:
         return None
 
@@ -521,8 +683,8 @@ def extract_chapter_review_questions(source: str, course: str, chapter: str) -> 
         current_answer_no = None
 
     for raw in lines:
-        line = raw.strip()
-        if line == "정답 및 해설":
+        line = normalize_question_number_prefix(raw.strip())
+        if line in {"정답 및 해설", "및 해설", "정답"} or line.endswith("해설"):
             flush_question()
             mode = "answers"
             current_answer_no = None
@@ -530,8 +692,8 @@ def extract_chapter_review_questions(source: str, course: str, chapter: str) -> 
 
         if mode == "questions":
             question_match = re.match(r"^(\d{2})\s+(.+)$", line)
-            option_no, option_text = parse_option_prefix(line, expected_next=current_option + 1 if current_option else 1)
-            if question_match and option_no is None:
+            prefix, option_entries = extract_option_entries(line)
+            if question_match and not option_entries:
                 flush_question()
                 current_question = {
                     "number": int(question_match.group(1)),
@@ -541,9 +703,17 @@ def extract_chapter_review_questions(source: str, course: str, chapter: str) -> 
                 current_option = None
                 continue
 
-            if current_question and option_no is not None and option_text:
-                current_question["options"][option_no] = option_text
-                current_option = option_no
+            if current_question and option_entries:
+                if prefix:
+                    if current_question["options"] and current_option is not None:
+                        current_question["options"][current_option] = clean_ocr_line(
+                            f"{current_question['options'][current_option]} {prefix}"
+                        )
+                    else:
+                        current_question["prompt_parts"].append(prefix)
+                for option_no, option_text in option_entries:
+                    current_question["options"][option_no] = option_text
+                    current_option = option_no
                 continue
 
             if current_question and current_option is not None:
@@ -627,34 +797,582 @@ def merge_base_questions() -> list[dict]:
     return items
 
 
-def extract_real_question_bank(base_items: list[dict], start_id: int) -> list[dict]:
+def extract_inline_chapter_questions(
+    source: str,
+    course: str,
+    chapter: str,
+    existing_keys: set[str],
+    start_id: int,
+) -> list[dict]:
+    if source in INLINE_SKIP_SOURCES:
+        return []
+
+    chapter_file = ROOT / "markdown" / source
+    markdown_text = chapter_file.read_text(encoding="utf-8")
+    code_blocks = extract_code_blocks(markdown_text)
+    chapter_index = next((idx for idx, block in enumerate(code_blocks) if "CHAPTER" in block), len(code_blocks))
+
+    lines: list[str] = []
+    for block in code_blocks[:chapter_index]:
+        lines.extend(block.splitlines())
+
+    items: list[dict] = []
+    next_id = start_id
+    in_supplement = False
+    pending_number: str | None = None
+    current: dict | None = None
+    current_option: int | None = None
+
+    def flush_current() -> None:
+        nonlocal current, current_option, next_id
+        if not current:
+            return
+
+        prompt = clean_question_prompt(" ".join(current["prompt_parts"]))
+        options = [clean_ocr_line(current["options"].get(index, "")) for index in range(1, 5)]
+        explanation = trim_explanation_text(" ".join(current["explanation_parts"]), 420)
+
+        candidate = {
+            "course": course,
+            "chapter": chapter,
+            "prompt": prompt,
+            "options": options,
+            "answer": current["answer"],
+            "explanation": explanation,
+            "source": source,
+        }
+        item_key = normalize_question_key(candidate)
+
+        if (
+            current["answer"] is not None
+            and all(options)
+            and item_key not in existing_keys
+            and is_high_confidence_inline_question(candidate)
+        ):
+            existing_keys.add(item_key)
+            items.append({**candidate, "id": next_id})
+            next_id += 1
+
+        current = None
+        current_option = None
+
+    for raw in lines:
+        line = clean_ocr_line(normalize_question_number_prefix(raw))
+        if not line:
+            continue
+        if line in {"TOPIC", "TO 이 C"} or re.match(r"^제\d+과목", line):
+            continue
+        if re.match(r"^\d+\s+제[0-9가-힣A-Za-z ]+$", line):
+            continue
+
+        if line.startswith("보충문제 >") or "합격률을 높이는 보충문제" in line:
+            flush_current()
+            in_supplement = True
+            pending_number = None
+            continue
+
+        if "핵심문제" in line:
+            flush_current()
+            current = {
+                "prompt_parts": [clean_ocr_line(line.split("핵심문제", 1)[1])],
+                "options": {},
+                "answer": None,
+                "explanation_parts": [],
+            }
+            current_option = None
+            in_supplement = False
+            pending_number = None
+            continue
+
+        if in_supplement:
+            if re.fullmatch(r"\d{2}", line):
+                flush_current()
+                pending_number = line
+                continue
+
+            supplement_match = re.match(r"^(\d{2})\s+(.+)$", line)
+            if supplement_match and (current is None or (len(current["options"]) == 4 and current["answer"] is not None)):
+                flush_current()
+                current = {
+                    "prompt_parts": [clean_ocr_line(supplement_match.group(2))],
+                    "options": {},
+                    "answer": None,
+                    "explanation_parts": [],
+                }
+                current_option = None
+                pending_number = None
+                continue
+
+            if pending_number and current is None:
+                current = {
+                    "prompt_parts": [line],
+                    "options": {},
+                    "answer": None,
+                    "explanation_parts": [],
+                }
+                current_option = None
+                pending_number = None
+                continue
+
+        if current is None:
+            continue
+
+        prefix, option_entries = extract_option_entries(line)
+        if option_entries:
+            if prefix:
+                if current["options"] and current_option is not None and len(current["options"]) < 4:
+                    current["options"][current_option] = clean_ocr_line(
+                        f"{current['options'][current_option]} {prefix}"
+                    )
+                elif not current["options"]:
+                    current["prompt_parts"].append(prefix)
+                elif current["answer"] is not None:
+                    current["explanation_parts"].append(prefix)
+            for number, text in option_entries:
+                current["options"][number] = text
+                current_option = number
+            continue
+
+        if len(current["options"]) < 4:
+            if current_option is not None and current["options"]:
+                current["options"][current_option] = clean_ocr_line(
+                    f"{current['options'][current_option]} {line}"
+                )
+            else:
+                current["prompt_parts"].append(line)
+            continue
+
+        if current["answer"] is None:
+            answer, remainder = detect_inline_answer(line)
+            if answer is not None:
+                current["answer"] = answer
+                if remainder:
+                    current["explanation_parts"].append(remainder)
+                continue
+
+        if current["answer"] is not None and (
+            "더 알아보기" in line or "핵심이론" in line or re.match(r"^제\d+장", line)
+        ):
+            flush_current()
+            continue
+
+        current["explanation_parts"].append(line)
+
+    flush_current()
+    return items
+
+
+def extract_real_question_bank(base_items: list[dict], start_id: int) -> tuple[list[dict], list[dict]]:
     source_map: dict[str, tuple[str, str]] = {}
     for item in base_items:
         source_map.setdefault(item["source"], (item["course"], item["chapter"]))
 
     existing_keys = {normalize_question_key(item) for item in base_items}
-    extracted: list[dict] = []
+    inline_items: list[dict] = []
+    review_items: list[dict] = []
     next_id = start_id
 
     for source, (course, chapter) in source_map.items():
+        chapter_inline = extract_inline_chapter_questions(
+            source,
+            course,
+            chapter,
+            existing_keys,
+            next_id,
+        )
+        inline_items.extend(chapter_inline)
+        if chapter_inline:
+            next_id = max(item["id"] for item in chapter_inline) + 1
+
         for item in extract_chapter_review_questions(source, course, chapter):
             item_key = normalize_question_key(item)
             if item_key in existing_keys:
                 continue
             existing_keys.add(item_key)
-            extracted.append({**item, "id": next_id})
+            review_items.append({**item, "id": next_id})
             next_id += 1
 
-    return extracted
+    return inline_items, review_items
+
+
+def extract_markdown_pages(markdown_text: str) -> list[tuple[int, str]]:
+    pattern = re.compile(r"## PDF 페이지 (\d+)\n\n```text\n(.*?)```", re.S)
+    return [(int(page), block) for page, block in pattern.findall(markdown_text)]
+
+
+def map_answer_token(token: str) -> int | None:
+    token = token.strip()
+    if token in STANDARD_OPTION_MAP:
+        return STANDARD_OPTION_MAP[token]
+    if token in OCR_OPTION_MAP:
+        return OCR_OPTION_MAP[token]
+    match = re.match(r"^\((\d)\)$", token)
+    if match:
+        return int(match.group(1))
+    if token in {"(3", "3)"}:
+        return 3
+    return None
+
+
+def split_first_four_options(text: str) -> tuple[str, list[str]] | None:
+    markers = []
+    search_start = 0
+    for symbol in ["①", "②", "③", "④"]:
+        match = re.search(re.escape(symbol), text[search_start:])
+        if not match:
+            return None
+        absolute_start = search_start + match.start()
+        absolute_end = search_start + match.end()
+        markers.append((symbol, absolute_start, absolute_end))
+        search_start = absolute_end
+
+    prompt = clean_ocr_line(text[: markers[0][1]])
+    prompt = re.sub(r"^\d+(?:-\d+)?\s*", "", prompt).strip()
+    if len(prompt) < 8:
+        return None
+
+    tail_cut_points = [
+        idx
+        for idx in [
+            text.find("더 알아보기", markers[-1][2]),
+            text.find("정답 및 해설", markers[-1][2]),
+        ]
+        if idx != -1
+    ]
+    option4_end = min(tail_cut_points) if tail_cut_points else len(text)
+
+    options: list[str] = []
+    for index, (_, _, marker_end) in enumerate(markers):
+        next_start = markers[index + 1][1] if index + 1 < len(markers) else option4_end
+        option_text = clean_ocr_line(text[marker_end:next_start])
+        if len(option_text) < 1:
+            return None
+        options.append(option_text)
+
+    return prompt, options
+
+
+def is_question_start_line(line: str) -> bool:
+    stripped = line.strip()
+    return bool(re.match(r"^\d{2}\s+.+$", stripped))
+
+
+def is_page_noise(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if stripped in {"CHAPTER", "정답 및 해설"}:
+        return False
+    if re.match(r"^제\d+장", stripped):
+        return True
+    if "부록" in stripped and "최종모의고사" in stripped:
+        return True
+    if re.match(r"^제\d+회 정답 및 해설", stripped):
+        return True
+    if stripped.startswith("제") and ("과목" in stripped or "회 최종모의고사" in stripped):
+        return True
+    return False
+
+
+def extract_mock_question_blocks(markdown_file: Path) -> list[str]:
+    markdown_text = markdown_file.read_text(encoding="utf-8")
+    pages = extract_markdown_pages(markdown_text)
+
+    lines: list[str] = []
+    started = False
+    for _, block in pages:
+        for raw in block.splitlines():
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            if "최종모의고사 100문항" in stripped:
+                started = True
+                continue
+            if not started:
+                continue
+            if is_page_noise(stripped):
+                continue
+            lines.append(clean_ocr_line(raw))
+
+    question_blocks: list[str] = []
+    current: list[str] = []
+    for line in lines:
+        if is_question_start_line(line):
+            if current:
+                question_blocks.append(" ".join(current))
+            current = [line]
+        else:
+            if current:
+                current.append(line)
+    if current:
+        question_blocks.append(" ".join(current))
+
+    return question_blocks
+
+
+def parse_mock_exam_questions(markdown_file: Path, chapter_name: str, start_id: int) -> list[dict]:
+    items: list[dict] = []
+    next_id = start_id
+    for exam_number, block in enumerate(extract_mock_question_blocks(markdown_file), start=1):
+        parsed = parse_question_block(block)
+        if not parsed:
+            continue
+        prompt, options = parsed
+        items.append(
+            {
+                "id": next_id,
+                "examNumber": exam_number,
+                "course": "종합모의고사",
+                "chapter": chapter_name,
+                "prompt": clean_question_prompt(prompt),
+                "options": options,
+                "source": f"mock_exam/{chapter_name}",
+            }
+        )
+        next_id += 1
+    return items
+
+
+def parse_mock_exam_answers(markdown_file: Path, page_start: int, page_end: int) -> tuple[dict[int, int], dict[int, str]]:
+    markdown_text = markdown_file.read_text(encoding="utf-8")
+    pages = [
+        block for page, block in extract_markdown_pages(markdown_text)
+        if page_start <= page <= page_end
+    ]
+
+    lines: list[str] = []
+    for block in pages:
+        for raw in block.splitlines():
+            stripped = normalize_question_number_prefix(raw.strip())
+            if not stripped or is_page_noise(stripped):
+                continue
+            lines.append(clean_ocr_line(raw))
+
+    answers: dict[int, int] = {}
+    explanations: dict[int, str] = {}
+
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"(?:\d{2}\s+){5,}\d{2}", line):
+            numbers = [int(token) for token in re.findall(r"\d{2}", line)]
+            answer_line_parts: list[str] = []
+            pointer = index + 1
+            while pointer < len(lines):
+                candidate = lines[pointer]
+                if re.fullmatch(r"(?:\d{2}\s+){5,}\d{2}", candidate):
+                    break
+                if re.match(r"^\d{2}\s+.+$", candidate):
+                    break
+                answer_line_parts.append(candidate)
+                tokens = re.findall(r"[①②③④©⊙㈢®@Q¥]|\(\d\)|[1-4]", " ".join(answer_line_parts))
+                if len(tokens) >= len(numbers) or len(answer_line_parts) >= 3:
+                    break
+                pointer += 1
+            tokens = re.findall(r"[①②③④©⊙㈢®@Q¥]|\(\d\)|[1-4]", " ".join(answer_line_parts))
+            for number, token in zip(numbers, tokens):
+                mapped = map_answer_token(token)
+                if mapped is not None:
+                    answers[number] = mapped
+
+    current_no: int | None = None
+    explanation_parts: list[str] = []
+
+    def flush_explanation() -> None:
+        nonlocal current_no, explanation_parts
+        if current_no is not None and explanation_parts:
+            explanations[current_no] = clean_ocr_line(" ".join(explanation_parts))
+        current_no = None
+        explanation_parts = []
+
+    for line in lines:
+        if re.fullmatch(r"(?:\d{2}\s+){5,}\d{2}", line):
+            continue
+
+        match = re.match(r"^(\d{2})\s+(.+)$", line)
+        if match:
+            second_token_is_number_row = len(re.findall(r"\d{2}", line)) >= 4
+            if second_token_is_number_row:
+                continue
+            flush_explanation()
+            current_no = int(match.group(1))
+            answer_value, remainder = parse_answer_prefix(match.group(2))
+            if answer_value is not None and current_no not in answers:
+                answers[current_no] = answer_value
+            explanation_parts = [remainder] if remainder else []
+            continue
+
+        if current_no is not None:
+            explanation_parts.append(line)
+
+    flush_explanation()
+    return answers, explanations
+
+
+def attach_mock_exam_metadata(
+    questions: list[dict],
+    answers: dict[int, int],
+    explanations: dict[int, str],
+) -> list[dict]:
+    items: list[dict] = []
+    for question in questions:
+        answer = answers.get(question["examNumber"])
+        explanation = shorten_text(explanations.get(question["examNumber"], ""), 420)
+        if answer is None or not explanation:
+            continue
+        inferred_answer = infer_answer_from_explanation(question["options"], explanation)
+        if inferred_answer is not None:
+            answer = inferred_answer
+        candidate = {
+            **{key: value for key, value in question.items() if key != "examNumber"},
+            "answer": answer,
+            "explanation": explanation,
+        }
+        if is_quality_question(candidate):
+            items.append(candidate)
+    return items
+
+
+def reindex_items(items: list[dict]) -> list[dict]:
+    remapped: list[dict] = []
+    for new_id, item in enumerate(sorted(items, key=lambda question: question["id"]), start=1):
+        updated = dict(item)
+        updated["id"] = new_id
+        remapped.append(updated)
+    return remapped
+
+
+CALC_TOPIC_MAP = [
+    ("세제", ("계산문제 특강", "세제관련법규/세무전략")),
+    ("양도소득", ("계산문제 특강", "세제관련법규/세무전략")),
+    ("금융상품", ("계산문제 특강", "금융상품")),
+    ("부동산", ("계산문제 특강", "부동산관련상품")),
+    ("대안투자", ("계산문제 특강", "대안투자운용/투자전략")),
+    ("해외투자", ("계산문제 특강", "해외 증권투자운용/투자전략")),
+    ("투자분석기법", ("계산문제 특강", "투자분석기법")),
+    ("리스크관리", ("계산문제 특강", "리스크 관리")),
+    ("직무윤리", ("계산문제 특강", "직무윤리")),
+    ("자본시장", ("계산문제 특강", "자본시장과 금융투자업에 관한 법률 및 금융위원회규정")),
+    ("주식투자운용", ("계산문제 특강", "주식투자운용/투자전략")),
+    ("채권투자운용", ("계산문제 특강", "채권투자운용/투자전략")),
+    ("파생상품", ("계산문제 특강", "파생상품 투자운용/투자전략")),
+    ("투자운용결과분석", ("계산문제 특강", "투자운용결과분석")),
+    ("거시경제", ("계산문제 특강", "거시경제")),
+    ("분산투자", ("계산문제 특강", "분산투자기법")),
+]
+
+
+def infer_calc_topic(text: str) -> tuple[str, str]:
+    cleaned = clean_ocr_line(text)
+    for keyword, meta in CALC_TOPIC_MAP:
+        if keyword in cleaned:
+            return meta
+    return ("계산문제 특강", "종합 계산문제")
+
+
+def extract_calc_note_questions(start_id: int) -> list[dict]:
+    reader = PdfReader(str(CALC_NOTE_PDF))
+    items: list[dict] = []
+    next_id = start_id
+
+    for page_number, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
+        if "①" not in text or "②" not in text or "③" not in text or "④" not in text:
+            continue
+
+        segments = re.split(r"(?=계산문[제데].{0,40}기출 70題)", text)
+        for segment in segments:
+            if "기출 70題" not in segment:
+                continue
+            if "더 알아보기" in segment:
+                segment = segment.split("더 알아보기", 1)[0]
+
+            parsed = split_first_four_options(segment)
+            if not parsed:
+                continue
+
+            prompt, options = parsed
+            match1 = re.search("①", segment)
+            match2 = re.search("②", segment[match1.end():] if match1 else "")
+            match3 = re.search("③", segment[match1.end() + match2.end():] if match1 and match2 else "")
+            match4 = re.search("④", segment[match1.end() + match2.end() + match3.end():] if match1 and match2 and match3 else "")
+            if not (match1 and match2 and match3 and match4):
+                continue
+
+            tail_after_options = segment[segment.rfind("④") + 1 :]
+            answer_match = re.search(r"^[^\S\r\nA-Za-z가-힣0-9]*([①②③④])[^\n]*$", tail_after_options, re.M)
+            if not answer_match:
+                continue
+
+            answer = map_answer_token(answer_match.group(1))
+            if answer is None:
+                continue
+
+            explanation = shorten_text(clean_ocr_line(tail_after_options), 420)
+            if len(explanation) < 6:
+                continue
+
+            course, chapter = infer_calc_topic("\n".join(segment.splitlines()[:5]) + " " + prompt)
+            candidate = {
+                "id": next_id,
+                "course": course,
+                "chapter": chapter,
+                "prompt": clean_question_prompt(prompt),
+                "options": options,
+                "answer": answer,
+                "explanation": explanation,
+                "source": f"calc_note/page-{page_number}",
+            }
+            if "아래 해설 풀이 참고" in " ".join(options) or "아래 해설 풀이 참고" in explanation:
+                continue
+            if is_quality_question(candidate):
+                items.append(candidate)
+                next_id += 1
+
+    return items
 
 
 def build_payload() -> dict:
     base_items = merge_base_questions()
-    extracted_items = extract_real_question_bank(
+    inline_chapter_items, chapter_review_items = extract_real_question_bank(
         base_items,
         start_id=max(item["id"] for item in base_items) + 1,
     )
-    items = base_items + extracted_items
+    next_id = max(item["id"] for item in (chapter_review_items or inline_chapter_items or base_items)) + 1
+
+    mock_exam_1_questions = parse_mock_exam_questions(
+        MOCK_EXAM_1_FILE,
+        "최종모의고사 제1회",
+        start_id=next_id,
+    )
+    answers_1, explanations_1 = parse_mock_exam_answers(MOCK_ANSWER_FILE, 549, 560)
+    mock_exam_1_items = attach_mock_exam_metadata(
+        mock_exam_1_questions,
+        answers_1,
+        explanations_1,
+    )
+    next_id = max(item["id"] for item in mock_exam_1_items or chapter_review_items or base_items) + 1
+
+    mock_exam_2_questions = parse_mock_exam_questions(
+        MOCK_EXAM_2_FILE,
+        "최종모의고사 제2회",
+        start_id=next_id,
+    )
+    answers_2, explanations_2 = parse_mock_exam_answers(MOCK_ANSWER_FILE, 561, 570)
+    mock_exam_2_items = attach_mock_exam_metadata(
+        mock_exam_2_questions,
+        answers_2,
+        explanations_2,
+    )
+    next_id = max(
+        item["id"]
+        for item in mock_exam_2_items or mock_exam_1_items or chapter_review_items or base_items
+    ) + 1
+
+    calc_note_items = extract_calc_note_questions(start_id=next_id)
+
+    extracted_items = (
+        inline_chapter_items + chapter_review_items + mock_exam_1_items + mock_exam_2_items + calc_note_items
+    )
+    items = reindex_items(base_items + extracted_items)
 
     course_counts: dict[str, int] = {}
     chapter_counts: dict[str, int] = {}
@@ -667,9 +1385,13 @@ def build_payload() -> dict:
 
     return {
         "title": "투자자산운용사 확장 문제은행",
-        "description": "기존 chapter markdown의 실제 문제와 기본 100문항을 합친 확장 문제은행",
+        "description": "기본 100문항, 챕터별 핵심문제·보충문제·말미 문제, 최종모의고사, 계산문제 특강노트를 합친 확장 문제은행",
         "baseQuestionCount": len(base_items),
         "generatedQuestionCount": 0,
+        "inlineChapterQuestionCount": len(inline_chapter_items),
+        "chapterReviewQuestionCount": len(chapter_review_items),
+        "mockExamQuestionCount": len(mock_exam_1_items) + len(mock_exam_2_items),
+        "calcNoteQuestionCount": len(calc_note_items),
         "extractedQuestionCount": len(extracted_items),
         "totalQuestions": len(items),
         "courseCounts": course_counts,
@@ -736,7 +1458,11 @@ def main() -> None:
     print(
         "Wrote "
         f"{payload['totalQuestions']} questions "
-        f"({payload['baseQuestionCount']} base + {payload['generatedQuestionCount']} generated) "
+        f"({payload['baseQuestionCount']} base + "
+        f"{payload['inlineChapterQuestionCount']} inline + "
+        f"{payload['chapterReviewQuestionCount']} chapter review + "
+        f"{payload['mockExamQuestionCount']} mock + "
+        f"{payload['calcNoteQuestionCount']} calc) "
         f"to {OUTPUT_FILE}"
     )
     print(f"Wrote markdown bank to {GENERATED_BANK_FILE}")

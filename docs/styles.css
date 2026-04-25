@@ -545,6 +545,29 @@ select {
   padding: 26px;
 }
 
+.question-figure {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 20px;
+  border: 1px solid rgba(28, 29, 26, 0.08);
+  background: rgba(255, 252, 247, 0.92);
+}
+
+.question-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  border: 1px solid rgba(28, 29, 26, 0.08);
+  background: #fff;
+}
+
+.question-image-caption {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
 .question-prompt {
   margin-top: 12px;
   font-size: clamp(1.34rem, 2.15vw, 1.92rem);

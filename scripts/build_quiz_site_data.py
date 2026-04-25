@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from pypdf import PdfReader
@@ -15,10 +16,15 @@ MOCK_EXAM_1_FILE = ROOT / "markdown" / "book2" / "10_최종모의고사_제1회.
 MOCK_EXAM_2_FILE = ROOT / "markdown" / "book2" / "11_최종모의고사_제2회.md"
 MOCK_ANSWER_FILE = ROOT / "markdown" / "book2" / "12_정답_및_해설.md"
 CALC_NOTE_PDF = ROOT / "[600dpi] 계산문제 특강노트_ocr.pdf"
+BOOK1_PDF = ROOT / "[600dpi] 제1권_ocr.pdf"
+BOOK2_PDF = ROOT / "[600dpi] 제2권_ocr.pdf"
+QUESTION_IMAGE_DIR = ROOT / "docs" / "assets" / "question-pages"
+RENDER_PDF_SCRIPT = ROOT / "scripts" / "render_pdf_page.swift"
 INLINE_SKIP_SOURCES = {
     "book1/01_세제관련법규_세무전략.md",
     "book1/02_금융상품.md",
 }
+FIGURE_PROMPT_PATTERN = re.compile(r"그림|도표")
 
 
 def normalize_spaces(text: str) -> str:
@@ -39,6 +45,11 @@ def clean_question_prompt(text: str) -> str:
     cleaned = re.sub(r"\s*[#eEoO]{2,}$", "", cleaned)
     cleaned = re.sub(r"\s*[.…]+$", "", cleaned)
     return cleaned.strip()
+
+
+def lookup_text(text: str) -> str:
+    text = clean_display_text(text)
+    return re.sub(r"\s+", "", text).lower()
 
 
 def shorten_text(text: str, limit: int) -> str:
@@ -347,6 +358,58 @@ def build_lessons(items: list[dict]) -> list[dict]:
 
     lessons.sort(key=lambda lesson: min(lesson["questionIds"]) if lesson["questionIds"] else 9999)
     return lessons
+
+
+def markdown_pdf_for_source(source: str) -> Path | None:
+    if source.startswith("book1/"):
+        return BOOK1_PDF
+    if source.startswith("book2/"):
+        return BOOK2_PDF
+    return None
+
+
+def locate_source_page(source: str, prompt: str) -> int | None:
+    if not source.startswith("book"):
+        return None
+
+    markdown_file = ROOT / "markdown" / source
+    if not markdown_file.exists():
+        return None
+
+    markdown_text = markdown_file.read_text(encoding="utf-8")
+    prompt_key = lookup_text(prompt.split("?")[0][:60])
+    if not prompt_key:
+        return None
+
+    for page_number, block in extract_markdown_pages(markdown_text):
+        block_key = lookup_text(block)
+        if prompt_key in block_key:
+            return page_number
+
+    return None
+
+
+def ensure_question_page_image(source: str, page_number: int) -> str | None:
+    pdf_file = markdown_pdf_for_source(source)
+    if pdf_file is None or not pdf_file.exists():
+        return None
+
+    book_prefix = "book1" if source.startswith("book1/") else "book2"
+    output_file = QUESTION_IMAGE_DIR / f"{book_prefix}-page-{page_number}.png"
+    if not output_file.exists():
+        subprocess.run(
+            [
+                "swift",
+                str(RENDER_PDF_SCRIPT),
+                str(pdf_file),
+                str(page_number),
+                str(output_file),
+                "1.8",
+            ],
+            check=True,
+            cwd=str(ROOT),
+        )
+    return str(output_file.relative_to(ROOT / "docs"))
 
 
 STANDARD_OPTION_MAP = {
@@ -1240,6 +1303,31 @@ def reindex_items(items: list[dict]) -> list[dict]:
     return remapped
 
 
+def attach_reference_images(items: list[dict]) -> list[dict]:
+    enriched: list[dict] = []
+    page_cache: dict[tuple[str, str], int | None] = {}
+
+    for item in items:
+        updated = dict(item)
+        if FIGURE_PROMPT_PATTERN.search(item["prompt"]):
+            cache_key = (item["source"], item["prompt"])
+            page_number = page_cache.get(cache_key)
+            if page_number is None and cache_key not in page_cache:
+                page_number = locate_source_page(item["source"], item["prompt"])
+                page_cache[cache_key] = page_number
+
+            if page_number:
+                image_path = ensure_question_page_image(item["source"], page_number)
+                if image_path:
+                    updated["sourcePage"] = page_number
+                    updated["image"] = f"./{image_path}"
+                    updated["imageAlt"] = f"원본 PDF 페이지 {page_number}"
+
+        enriched.append(updated)
+
+    return enriched
+
+
 CALC_TOPIC_MAP = [
     ("세제", ("계산문제 특강", "세제관련법규/세무전략")),
     ("양도소득", ("계산문제 특강", "세제관련법규/세무전략")),
@@ -1372,7 +1460,7 @@ def build_payload() -> dict:
     extracted_items = (
         inline_chapter_items + chapter_review_items + mock_exam_1_items + mock_exam_2_items + calc_note_items
     )
-    items = reindex_items(base_items + extracted_items)
+    items = attach_reference_images(reindex_items(base_items + extracted_items))
 
     course_counts: dict[str, int] = {}
     chapter_counts: dict[str, int] = {}

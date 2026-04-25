@@ -3650,7 +3650,10 @@
       "answer": 4,
       "explanation": "B 체계적 위험 비체계적 위험 비체계적 위험 체계적 위험 EEI 종목수를 늘릴수록 비체계적 위험(A)이 제거된다. 아무리 종목수를 늘려도 체계적 위험(B)은 제거되지 않는다. 총위험은 (A + B)이다. ④",
       "source": "book1/03_부동산관련상품.md",
-      "id": 121
+      "id": 121,
+      "sourcePage": 216,
+      "image": "./assets/question-pages/book1-page-216.png",
+      "imageAlt": "원본 PDF 페이지 216"
     },
     {
       "course": "제1과목 금융상품 및 세제",
@@ -3860,7 +3863,10 @@
       "answer": 3,
       "explanation": "상관관계는 낮을수록 분산투자효과가 커진다. 0 ③",
       "source": "book1/05_해외_증권투자운용_투자전략.md",
-      "id": 135
+      "id": 135,
+      "sourcePage": 282,
+      "image": "./assets/question-pages/book1-page-282.png",
+      "imageAlt": "원본 PDF 페이지 282"
     },
     {
       "course": "제2과목 투자운용 및 전략 II 및 투자분석",
@@ -5495,7 +5501,10 @@
       "answer": 1,
       "explanation": "이를 ‘사후적 제로섬'이라 한다. 뻬 선도거래(Forward)라 한다. 선도거래는 장외, 선물거래는 장내이다. 사후적 제로섬 게임(Ex-Post Zero Sum Game)은 장외거래에서는 신용위험이 존재함을 의미한다. 0①",
       "source": "book2/06_파생상품_투자운용_투자전략.md",
-      "id": 244
+      "id": 244,
+      "sourcePage": 334,
+      "image": "./assets/question-pages/book2-page-334.png",
+      "imageAlt": "원본 PDF 페이지 334"
     },
     {
       "course": "제3과목 직무윤리 및 법규/투자운용 및 전략 I 등",
@@ -5870,7 +5879,10 @@
       "answer": 3,
       "explanation": "丁의 왼쪽은 대출포트폴리오, T 의 오른쪽은 차입포트폴리오이다. e는 차입포트폴리오이므로 공격적인 투자자에 해당된다.",
       "source": "book2/09_분산투자기법.md",
-      "id": 269
+      "id": 269,
+      "sourcePage": 488,
+      "image": "./assets/question-pages/book2-page-488.png",
+      "imageAlt": "원본 PDF 페이지 488"
     },
     {
       "course": "제3과목 직무윤리 및 법규/투자운용 및 전략 I 등",

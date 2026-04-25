@@ -63,6 +63,9 @@ const elements = {
   scoreWrong: document.querySelector("#score-wrong"),
   progressBar: document.querySelector("#progress-bar"),
   questionBadge: document.querySelector("#question-badge"),
+  questionFigure: document.querySelector("#question-figure"),
+  questionImage: document.querySelector("#question-image"),
+  questionImageCaption: document.querySelector("#question-image-caption"),
   questionPrompt: document.querySelector("#question-prompt"),
   options: document.querySelector("#options"),
   explanationCard: document.querySelector("#explanation-card"),
@@ -486,6 +489,19 @@ function renderQuestion() {
   elements.questionIndex.textContent = `${state.session.index + 1} / ${state.session.questions.length}`;
   elements.questionMeta.textContent = `${question.course} / ${question.chapter}`;
   elements.questionBadge.textContent = `Question ${question.id}`;
+  if (question.image) {
+    elements.questionFigure.classList.remove("hidden");
+    elements.questionImage.src = question.image;
+    elements.questionImage.alt = question.imageAlt || question.prompt;
+    elements.questionImageCaption.textContent = question.sourcePage
+      ? `원본 PDF 페이지 ${question.sourcePage}`
+      : "원본 PDF 이미지";
+  } else {
+    elements.questionFigure.classList.add("hidden");
+    elements.questionImage.removeAttribute("src");
+    elements.questionImage.alt = "";
+    elements.questionImageCaption.textContent = "";
+  }
   elements.questionPrompt.textContent = question.prompt;
   elements.scoreCorrect.textContent = String(state.session.correctCount);
   elements.scoreWrong.textContent = String(state.session.wrongCount);

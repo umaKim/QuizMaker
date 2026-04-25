@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
-from pypdf import PdfReader
+try:
+    from pypdf import PdfReader
+except ModuleNotFoundError:
+    PdfReader = None
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -397,6 +401,8 @@ def ensure_question_page_image(source: str, page_number: int) -> str | None:
     book_prefix = "book1" if source.startswith("book1/") else "book2"
     output_file = QUESTION_IMAGE_DIR / f"{book_prefix}-page-{page_number}.png"
     if not output_file.exists():
+        if sys.platform != "darwin":
+            return None
         subprocess.run(
             [
                 "swift",
@@ -1357,6 +1363,9 @@ def infer_calc_topic(text: str) -> tuple[str, str]:
 
 
 def extract_calc_note_questions(start_id: int) -> list[dict]:
+    if PdfReader is None or not CALC_NOTE_PDF.exists():
+        return []
+
     reader = PdfReader(str(CALC_NOTE_PDF))
     items: list[dict] = []
     next_id = start_id

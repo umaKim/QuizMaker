@@ -27,6 +27,7 @@ RENDER_PDF_SCRIPT = ROOT / "scripts" / "render_pdf_page.swift"
 INLINE_SKIP_SOURCES = {
     "book1/01_세제관련법규_세무전략.md",
     "book1/02_금융상품.md",
+    "book2/02_자본시장과_금융투자업에_관한_법률_및_금융위원회규정.md",
 }
 FIGURE_PROMPT_PATTERN = re.compile(r"그림|도표")
 
@@ -1077,7 +1078,8 @@ def map_answer_token(token: str) -> int | None:
         return OCR_OPTION_MAP[token]
     match = re.match(r"^\((\d)\)$", token)
     if match:
-        return int(match.group(1))
+        number = int(match.group(1))
+        return number if 1 <= number <= 4 else None
     if token in {"(3", "3)"}:
         return 3
     return None

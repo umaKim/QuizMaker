@@ -292,6 +292,21 @@ def make_source(chapter: Chapter, topic: Topic) -> str:
     return f"docx/투운사 정리본.docx#{slug(chapter.chapter)}#{slug(topic.title)}"
 
 
+def reference_facts(topic: Topic, priority: list[str] | None = None, limit: int = 12) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for fact in (priority or []) + topic.facts:
+        fact = clean_text(fact)
+        key = normalize_key(fact)
+        if not fact or key in seen:
+            continue
+        seen.add(key)
+        result.append(fact)
+        if len(result) >= limit:
+            break
+    return result
+
+
 def create_pair_question(
     chapter: Chapter,
     topic: Topic,
@@ -328,6 +343,7 @@ def create_pair_question(
         "options": options,
         "answer": answer,
         "explanation": f"정리본의 '{topic.title}' 항목에서는 '{key}'를 '{value}'로 정리한다.",
+        "referenceFacts": reference_facts(topic, [f"{key}: {value}"]),
         "source": make_source(chapter, topic),
     }
 
@@ -362,6 +378,7 @@ def create_statement_question(
         "options": options,
         "answer": answer,
         "explanation": f"정리본의 '{topic.title}' 항목에서는 '{fact}'로 정리되어 있다.",
+        "referenceFacts": reference_facts(topic, [fact]),
         "source": make_source(chapter, topic),
     }
 
@@ -397,6 +414,7 @@ def create_odd_question(
         "options": options,
         "answer": answer,
         "explanation": f"{answer}번은 같은 챕터의 다른 항목에 관한 설명이다. '{topic.title}'의 핵심 내용은 정리본 해당 항목을 확인한다.",
+        "referenceFacts": reference_facts(topic, correct_facts),
         "source": make_source(chapter, topic),
     }
 
@@ -508,7 +526,7 @@ def build_study_guide(chapters: list[Chapter]) -> dict:
     for chapter in chapters:
         topics = []
         for topic in chapter.topics:
-            bullets = topic.facts[:8]
+            bullets = topic.facts[:20]
             if not bullets:
                 continue
             topics.append(

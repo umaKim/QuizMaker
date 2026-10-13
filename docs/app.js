@@ -84,6 +84,7 @@ const elements = {
   explanationCard: document.querySelector("#explanation-card"),
   answerPill: document.querySelector("#answer-pill"),
   explanationText: document.querySelector("#explanation-text"),
+  explanationEvidence: document.querySelector("#explanation-evidence"),
   sourceChip: document.querySelector("#source-chip"),
   prevQuestion: document.querySelector("#prev-question"),
   checkAnswer: document.querySelector("#check-answer"),
@@ -627,6 +628,94 @@ function getStudyGuideIdForQuestion(question) {
   return slug(`${question.course}-${question.chapter}`);
 }
 
+function parseQuestionSource(question) {
+  const source = question?.source || "";
+  if (!source.startsWith("docx/")) {
+    return {
+      sectionId: getStudyGuideIdForQuestion(question),
+      topicId: "",
+    };
+  }
+
+  const [, , , topicSlug = ""] = source.match(/^docx\/([^#]+)#?([^#]*)#?([^#]*)/) || [];
+  return {
+    sectionId: getStudyGuideIdForQuestion(question),
+    topicId: topicSlug,
+  };
+}
+
+function findStudyTopicForQuestion(question) {
+  const reference = parseQuestionSource(question);
+  const section = state.studyGuideMap.get(reference.sectionId);
+  if (!section) return { section: null, topic: null, topicId: reference.topicId };
+
+  const topic =
+    (section.topics || []).find((entry) => slug(entry.topic) === reference.topicId) ||
+    (section.topics || []).find((entry) => question.prompt.includes(`'${entry.topic}'`)) ||
+    null;
+
+  return {
+    section,
+    topic,
+    topicId: topic ? slug(topic.topic) : reference.topicId,
+  };
+}
+
+function buildExplanationDetails(question) {
+  const { topic } = findStudyTopicForQuestion(question);
+  if (!topic) return [];
+
+  const correctOption = question.options?.[question.answer - 1] || "";
+  const normalizedCorrect = correctOption.replace(/\s+/g, "");
+  const bullets =
+    Array.isArray(question.referenceFacts) && question.referenceFacts.length
+      ? question.referenceFacts
+      : topic.bullets || [];
+  const priority = [];
+  const rest = [];
+
+  for (const bullet of bullets) {
+    const normalizedBullet = String(bullet).replace(/\s+/g, "");
+    if (
+      normalizedCorrect &&
+      (normalizedBullet.includes(normalizedCorrect) || normalizedCorrect.includes(normalizedBullet))
+    ) {
+      priority.push(bullet);
+    } else {
+      rest.push(bullet);
+    }
+  }
+
+  return [...priority, ...rest].slice(0, 12);
+}
+
+function renderExplanation(question) {
+  elements.answerPill.textContent = `정답 ${question.answer}번`;
+  elements.explanationText.innerHTML = "";
+  elements.explanationEvidence.innerHTML = "";
+
+  const main = document.createElement("p");
+  main.textContent = question.explanation;
+  elements.explanationText.appendChild(main);
+
+  const details = buildExplanationDetails(question);
+  const { topic } = findStudyTopicForQuestion(question);
+  if (!details.length) return;
+
+  const title = document.createElement("div");
+  title.className = "explanation-evidence-title";
+  title.textContent = topic?.topic ? `근거 정리: ${topic.topic}` : "근거 정리";
+
+  const list = document.createElement("ul");
+  for (const detail of details) {
+    const item = document.createElement("li");
+    item.textContent = detail;
+    list.appendChild(item);
+  }
+
+  elements.explanationEvidence.append(title, list);
+}
+
 function renderKnowledgeSelect() {
   elements.knowledgeSelect.innerHTML = "";
 
@@ -662,11 +751,12 @@ function knowledgeSectionMatches(section, query) {
   return haystack.includes(normalized);
 }
 
-function createKnowledgeSectionCard(section, isTarget = false) {
+function createKnowledgeSectionCard(section, { targetSectionId = "", targetTopicId = "" } = {}) {
   const card = document.createElement("article");
   card.id = `knowledge-${section.id}`;
   card.className = "knowledge-section-card";
-  if (isTarget) card.classList.add("focus-pulse");
+  const isTargetSection = section.id === targetSectionId;
+  if (isTargetSection && !targetTopicId) card.classList.add("focus-pulse");
 
   const head = document.createElement("div");
   head.className = "knowledge-section-head";
@@ -697,6 +787,11 @@ function createKnowledgeSectionCard(section, isTarget = false) {
   for (const topic of section.topics || []) {
     const block = document.createElement("section");
     block.className = "knowledge-topic";
+    const topicId = slug(topic.topic);
+    block.id = `knowledge-topic-${section.id}-${topicId}`;
+    if (isTargetSection && topicId === targetTopicId) {
+      block.classList.add("focus-pulse", "topic-focus");
+    }
 
     const topicTitle = document.createElement("h4");
     topicTitle.textContent = topic.topic;
@@ -745,7 +840,11 @@ function createKnowledgeSectionCard(section, isTarget = false) {
   return card;
 }
 
-function renderKnowledgeView({ targetId = "", query = elements.knowledgeSearch.value || "" } = {}) {
+function renderKnowledgeView({
+  targetId = "",
+  targetTopicId = "",
+  query = elements.knowledgeSearch.value || "",
+} = {}) {
   const sections = state.studyGuide?.sections || [];
   const selectedId = targetId || elements.knowledgeSelect.value || "";
   const visibleSections = sections.filter((section) => {
@@ -782,7 +881,7 @@ function renderKnowledgeView({ targetId = "", query = elements.knowledgeSearch.v
 
   for (const section of visibleSections) {
     elements.knowledgeList.appendChild(
-      createKnowledgeSectionCard(section, section.id === targetId),
+      createKnowledgeSectionCard(section, { targetSectionId: targetId, targetTopicId }),
     );
   }
 
@@ -790,17 +889,23 @@ function renderKnowledgeView({ targetId = "", query = elements.knowledgeSearch.v
 
   if (targetId) {
     requestAnimationFrame(() => {
-      const target = document.querySelector(`#knowledge-${CSS.escape(targetId)}`);
+      const topicSelector = targetTopicId
+        ? `#knowledge-topic-${CSS.escape(targetId)}-${CSS.escape(targetTopicId)}`
+        : "";
+      const target =
+        (topicSelector && document.querySelector(topicSelector)) ||
+        document.querySelector(`#knowledge-${CSS.escape(targetId)}`);
       target?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
 }
 
 function openQuestionReference(question) {
-  const targetId = getStudyGuideIdForQuestion(question);
+  const { section, topicId } = findStudyTopicForQuestion(question);
+  const targetId = section?.id || getStudyGuideIdForQuestion(question);
   if (state.studyGuideMap.has(targetId)) {
     elements.knowledgeSearch.value = "";
-    renderKnowledgeView({ targetId });
+    renderKnowledgeView({ targetId, targetTopicId: topicId });
     return;
   }
 
@@ -875,8 +980,7 @@ function renderQuestion() {
 
   if (questionState.revealed) {
     elements.explanationCard.classList.remove("hidden");
-    elements.answerPill.textContent = `정답 ${question.answer}번`;
-    elements.explanationText.textContent = question.explanation;
+    renderExplanation(question);
     elements.sourceChip.textContent = `근거: ${formatSourceLabel(question)}`;
     elements.sourceChip.title = "관련 정리로 이동";
     elements.sourceChip.disabled = false;
@@ -887,6 +991,8 @@ function renderQuestion() {
     );
   } else {
     elements.explanationCard.classList.add("hidden");
+    elements.explanationText.innerHTML = "";
+    elements.explanationEvidence.innerHTML = "";
     elements.checkAnswer.classList.remove("hidden");
     elements.nextQuestion.classList.add("hidden");
   }
@@ -1253,8 +1359,13 @@ function renderNotebookView() {
     const conceptButton = document.createElement("button");
     conceptButton.type = "button";
     conceptButton.className = "ghost-button";
-    conceptButton.textContent = "관련 개념 보기";
+    conceptButton.textContent = "근거 정리 보기";
     conceptButton.addEventListener("click", () => {
+      const question = state.questionMap.get(record.id);
+      if (question) {
+        openQuestionReference(question);
+        return;
+      }
       state.activeLessonKey = getChapterKey(record);
       persistSettings();
       renderLessonView();

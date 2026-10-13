@@ -577,6 +577,14 @@ select {
 .knowledge-topic {
   border-top: 1px solid var(--line);
   padding-top: 16px;
+  scroll-margin-top: 24px;
+}
+
+.knowledge-topic.topic-focus {
+  border: 1px solid rgba(15, 118, 110, 0.26);
+  border-radius: 18px;
+  background: rgba(204, 251, 241, 0.22);
+  padding: 18px;
 }
 
 .knowledge-topic h4 {
@@ -802,6 +810,38 @@ select {
   margin: 14px 0;
   line-height: 1.75;
   color: var(--ink);
+}
+
+.explanation-text p {
+  margin: 0;
+}
+
+.explanation-evidence {
+  margin: 16px 0;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  background: rgba(204, 251, 241, 0.2);
+}
+
+.explanation-evidence:empty {
+  display: none;
+}
+
+.explanation-evidence-title {
+  color: var(--teal);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.explanation-evidence ul {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  line-height: 1.72;
+}
+
+.explanation-evidence li + li {
+  margin-top: 6px;
 }
 
 .source-chip {

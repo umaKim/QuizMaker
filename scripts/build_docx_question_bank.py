@@ -173,6 +173,82 @@ def should_keep_fact(text: str) -> bool:
     return True
 
 
+def is_comparison_title(text: str) -> bool:
+    return bool(re.search(r"\bvs\b", text, re.I))
+
+
+def split_comparison_terms(text: str) -> list[str]:
+    terms = [clean_text(part) for part in re.split(r"\bvs\b", text, flags=re.I)]
+    return [term for term in terms if term]
+
+
+def comparison_subject(title: str) -> str:
+    normalized = title.lower()
+    if "분리과세" in title:
+        return "분리과세 유형별 대상, 세율, 선택 기준"
+    if "요구불예금" in title and "저축성예금" in title:
+        return "요구불예금과 저축성예금의 차이"
+    if "부동산펀드" in title and "부동산투자회사" in title:
+        return "부동산펀드와 부동산투자회사의 차이"
+    if "금액가중수익률" in title and "시간가중수익률" in title:
+        return "금액가중수익률과 시간가중수익률의 차이"
+    terms = split_comparison_terms(title)
+    if len(terms) == 2:
+        return f"{terms[0]}와 {terms[1]}의 차이"
+    if len(terms) > 2:
+        return f"{', '.join(terms)}의 구분"
+    return title
+
+
+def topic_subject(topic: Topic) -> str:
+    if is_comparison_title(topic.title):
+        return comparison_subject(topic.title)
+    return topic.title
+
+
+def label_like_fact(text: str, labels: list[str]) -> str | None:
+    normalized = normalize_key(text)
+    for label in labels:
+        normalized_label = normalize_key(label)
+        if not normalized_label:
+            continue
+        if normalized == normalized_label:
+            return text
+        if normalized.startswith(normalized_label) and len(text) <= len(label) + 18:
+            return text
+    return None
+
+
+def contextualize_comparison_facts(topic: Topic) -> list[str]:
+    if not is_comparison_title(topic.title):
+        return topic.facts
+
+    labels = split_comparison_terms(topic.title)
+    current_label = ""
+    facts: list[str] = []
+    for fact in topic.facts:
+        label = label_like_fact(fact, labels)
+        if label:
+            current_label = label
+            continue
+
+        if "|" in fact and len(labels) == 2:
+            left, right = [clean_text(part) for part in fact.split("|", 1)]
+            facts.append(f"{labels[0]}: {left} / {labels[1]}: {right}")
+            continue
+
+        if "분리과세" in topic.title and ("과세표준" in fact or "유리" in fact):
+            current_label = "장기채권 분리과세 선택 기준"
+        elif "분리과세" in topic.title and re.search(r"조건부\s*종합과세", fact):
+            current_label = "조건부종합과세"
+
+        if current_label and ":" not in fact and "|" not in fact:
+            facts.append(f"{current_label}: {fact}")
+        else:
+            facts.append(fact)
+    return facts
+
+
 def parse_pair(text: str) -> tuple[str, str] | None:
     candidates = [
         r"^([^:：]{2,36})[:：]\s*(.{2,130})$",
@@ -273,6 +349,10 @@ def parse_docx(path: Path) -> list[Chapter]:
             current_topic.pairs.extend(pairs)
 
     for chapter in chapters:
+        for topic in chapter.topics:
+            topic.facts = contextualize_comparison_facts(topic)
+            if not is_comparison_title(topic.title):
+                topic.facts = [fact for fact in topic.facts if "|" not in fact]
         chapter.topics = [topic for topic in chapter.topics if topic.facts or topic.pairs]
     return chapters
 
@@ -374,10 +454,10 @@ def create_statement_question(
         "id": question_id,
         "course": chapter.course,
         "chapter": chapter.chapter,
-        "prompt": f"다음 중 '{topic.title}'에 관한 설명으로 옳은 것은?",
+        "prompt": f"다음 중 '{topic_subject(topic)}'에 관한 설명으로 옳은 것은?",
         "options": options,
         "answer": answer,
-        "explanation": f"정리본의 '{topic.title}' 항목에서는 '{fact}'로 정리되어 있다.",
+        "explanation": f"정리본의 '{topic_subject(topic)}' 항목에서는 '{fact}'로 정리되어 있다.",
         "referenceFacts": reference_facts(topic, [fact]),
         "source": make_source(chapter, topic),
     }
@@ -410,10 +490,10 @@ def create_odd_question(
         "id": question_id,
         "course": chapter.course,
         "chapter": chapter.chapter,
-        "prompt": f"다음 중 '{topic.title}'에 관한 설명으로 가장 거리가 먼 것은?",
+        "prompt": f"다음 중 '{topic_subject(topic)}'에 관한 설명으로 가장 거리가 먼 것은?",
         "options": options,
         "answer": answer,
-        "explanation": f"{answer}번은 같은 챕터의 다른 항목에 관한 설명이다. '{topic.title}'의 핵심 내용은 정리본 해당 항목을 확인한다.",
+        "explanation": f"{answer}번은 같은 챕터의 다른 항목에 관한 설명이다. '{topic_subject(topic)}'의 핵심 내용은 정리본 해당 항목을 확인한다.",
         "referenceFacts": reference_facts(topic, correct_facts),
         "source": make_source(chapter, topic),
     }

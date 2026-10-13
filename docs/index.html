@@ -6,7 +6,7 @@
     <title>투자자산운용사 퀴즈 랩</title>
     <meta
       name="description"
-      content="투자자산운용사 chapter markdown을 바탕으로 만든 확장형 문제은행 퀴즈 사이트"
+      content="투자자산운용사 노션 정리와 OCR 교재 문제은행을 바탕으로 만든 실전형 퀴즈 사이트"
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,7 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Cormorant+Garamond:wght@500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20261014-docx" />
   </head>
   <body>
     <div class="page-aura"></div>
@@ -26,8 +26,8 @@
           <div>
             <h1>투자자산운용사 퀴즈 랩</h1>
             <p class="hero-copy">
-              각 챕터 핵심 개념을 먼저 익힌 뒤 대규모 문제은행을 시험처럼 풀거나,
-              해설과 근거를 바로 확인하면서 학습할 수 있는 개인용 웹사이트입니다.
+              노션에 정리한 핵심 암기 포인트와 OCR 교재 문제은행을 연결해,
+              모바일과 PC에서 실전 세트처럼 풀고 답과 근거를 바로 확인합니다.
             </p>
           </div>
           <div class="hero-stats">
@@ -49,70 +49,65 @@
 
       <div class="layout">
         <aside class="sidebar panel">
-          <section class="sidebar-section">
-            <div class="section-label">모드</div>
-            <div class="segmented" id="mode-picker">
-              <button class="segment active" data-mode="study" type="button">학습 모드</button>
-              <button class="segment" data-mode="exam" type="button">시험 모드</button>
-            </div>
-          </section>
-
-          <section class="sidebar-section">
-            <div class="section-label">문항 수</div>
+          <section class="sidebar-section compact-section">
+            <div class="section-label">전체 랜덤</div>
+            <p class="section-copy">
+              모든 챕터 문제를 매번 새 순서로 섞어서 풉니다.
+            </p>
             <div class="select-wrap">
               <select id="question-count"></select>
             </div>
+            <div class="stacked-actions">
+              <button id="start-quiz" class="primary-button" type="button">전체 랜덤 시작</button>
+            </div>
           </section>
 
-          <section class="sidebar-section">
-            <div class="section-label">세션 옵션</div>
-            <label class="switch">
-              <input id="shuffle-toggle" type="checkbox" checked />
-              <span>문항 순서 섞기</span>
-            </label>
-            <label class="switch">
-              <input id="wrong-only-toggle" type="checkbox" />
-              <span>오답만 다시 풀기</span>
-            </label>
-          </section>
-
-          <section class="sidebar-section">
-            <div class="section-label">챕터 학습</div>
-            <p class="section-copy">
-              미리 정리된 chapter md를 기준으로 핵심 개념을 먼저 보고, 바로 해당 챕터 문제를 풀 수 있습니다.
-            </p>
+          <section class="sidebar-section compact-section">
+            <div class="section-label">챕터별 문제</div>
             <div class="select-wrap">
               <select id="lesson-select"></select>
             </div>
             <div class="stacked-actions">
-              <button id="open-lesson" class="primary-button" type="button">개념 학습 열기</button>
-              <button id="start-lesson-quiz" class="secondary-button" type="button">이 챕터 문제 풀기</button>
-              <button id="open-notebook" class="ghost-button" type="button">오답노트 보기</button>
+              <button id="start-lesson-quiz" class="primary-button" type="button">선택 챕터 풀기</button>
+              <button id="open-lesson" class="secondary-button" type="button">챕터 핵심 보기</button>
             </div>
           </section>
 
-          <section class="sidebar-section">
-            <div class="section-head">
-              <div class="section-label">과목 필터</div>
-              <button id="select-all-courses" class="ghost-button" type="button">전체 선택</button>
+          <section class="sidebar-section compact-section">
+            <div class="section-label">지식 정리</div>
+            <p class="section-copy">
+              노션과 PDF 보강자료를 챕터별로 정리해서 봅니다.
+            </p>
+            <div class="stacked-actions">
+              <button id="open-knowledge" class="primary-button" type="button">전체 정리 보기</button>
             </div>
-            <div id="course-filters" class="chip-cloud"></div>
           </section>
 
-          <section class="sidebar-section">
-            <div class="section-head">
-              <div class="section-label">챕터 필터</div>
-              <div class="actions-inline">
-                <button id="select-all-chapters" class="ghost-button" type="button">전체</button>
-                <button id="clear-all-chapters" class="ghost-button" type="button">해제</button>
-              </div>
+          <section class="sidebar-section compact-section">
+            <div class="section-label">오답 모음</div>
+            <p class="section-copy">
+              틀린 문제와 틀린 횟수를 모아 봅니다.
+            </p>
+            <div class="stacked-actions">
+              <button id="open-notebook" class="primary-button" type="button">오답만 보기</button>
+              <button id="reset-storage" class="secondary-button" type="button">오답 기록 초기화</button>
             </div>
-            <div id="chapter-filters" class="chapter-list"></div>
           </section>
 
-          <section class="sidebar-section sidebar-footer">
-            <button id="start-quiz" class="primary-button" type="button">세션 시작</button>
-            <button id="reset-storage" class="secondary-button" type="button">오답 기록 초기화</button>
+          <section class="hidden" aria-hidden="true">
+            <div id="mode-picker">
+              <button class="segment active" data-mode="study" type="button">학습 모드</button>
+              <button class="segment" data-mode="exam" type="button">시험 모드</button>
+            </div>
+            <select id="exam-set-select"></select>
+            <button id="start-exam-set" type="button">선택 세트 시작</button>
+            <input id="shuffle-toggle" type="checkbox" checked />
+            <input id="wrong-only-toggle" type="checkbox" />
+            <button id="select-all-courses" type="button">전체 선택</button>
+            <button id="select-all-chapters" type="button">전체</button>
+            <button id="clear-all-chapters" type="button">해제</button>
+            <div id="course-filters"></div>
+            <div id="chapter-filters"></div>
           </section>
         </aside>
 
@@ -132,32 +127,51 @@
               <div class="welcome-eyebrow">Study Like an Operator</div>
               <h2>문항을 고르고 바로 시작할 수 있습니다.</h2>
               <p>
-                왼쪽에서 과목과 챕터를 고르면 한 문제씩 답안을 제출하고,
-                정답과 풀이, 출처 chapter를 바로 확인할 수 있습니다.
+                왼쪽에서 전체 랜덤, 챕터별 문제, 오답 모음 중 하나를 고르면 됩니다.
+                틀린 문제는 자동으로 오답 모음에 저장됩니다.
               </p>
             </div>
             <div class="welcome-panels">
               <article class="mini-panel">
-                <span>학습 모드</span>
-                <strong>정답 확인 후 바로 해설</strong>
-                <p>암기보다 이해 확인이 필요할 때 적합합니다.</p>
+                <span>전체 랜덤</span>
+                <strong>모든 챕터를 섞어서 풀이</strong>
+                <p>매번 다른 순서로 실전 감각을 유지합니다.</p>
               </article>
               <article class="mini-panel">
-                <span>시험 모드</span>
-                <strong>집중해서 한 세션 완주</strong>
-                <p>실전처럼 점수와 정확도를 확인할 수 있습니다.</p>
+                <span>챕터별 문제</span>
+                <strong>약한 단원만 집중</strong>
+                <p>노션 핵심 포인트를 확인한 뒤 바로 풀 수 있습니다.</p>
               </article>
               <article class="mini-panel">
-                <span>오답 보관함</span>
-                <strong>틀린 문제만 다시</strong>
-                <p>세션 간에 로컬에 저장되어 반복 학습이 가능합니다.</p>
+                <span>오답 모음</span>
+                <strong>틀린 횟수까지 기록</strong>
+                <p>반복해서 틀리는 문제를 따로 추적합니다.</p>
               </article>
               <article class="mini-panel">
-                <span>챕터 학습</span>
-                <strong>개념 설명 후 관련 문제 풀이</strong>
-                <p>chapter md를 요약한 핵심 개념 카드와 연계 문제를 바로 볼 수 있습니다.</p>
+                <span>지식 정리</span>
+                <strong>출처로 바로 이동</strong>
+                <p>문제 해설의 출처 버튼을 누르면 관련 정리로 이동합니다.</p>
               </article>
             </div>
+          </section>
+
+          <section id="knowledge-view" class="knowledge-view hidden">
+            <div class="lesson-head">
+              <div>
+                <div class="welcome-eyebrow">Study Guide</div>
+                <h2>지식 정리</h2>
+                <p class="lesson-overview">
+                  노션 정리와 PDF 보강자료를 시험 범위별로 묶었습니다.
+                </p>
+              </div>
+              <div class="knowledge-tools">
+                <input id="knowledge-search" class="knowledge-search" type="search" placeholder="개념 검색" />
+                <div class="select-wrap">
+                  <select id="knowledge-select"></select>
+                </div>
+              </div>
+            </div>
+            <div id="knowledge-list" class="knowledge-list"></div>
           </section>
 
           <section id="lesson-view" class="lesson-view hidden">
@@ -170,6 +184,7 @@
               <div class="lesson-meta" id="lesson-meta"></div>
             </div>
             <div id="lesson-topic-list" class="lesson-topic-list"></div>
+            <div id="lesson-notion-list" class="notion-highlight-list"></div>
             <div class="quiz-actions">
               <button id="lesson-start-quiz" class="primary-button" type="button">관련 문제 풀기</button>
               <button id="lesson-open-notebook" class="secondary-button" type="button">오답노트 보기</button>
@@ -186,6 +201,7 @@
               <div class="score-copy">
                 <span>정답 <strong id="score-correct">0</strong></span>
                 <span>오답 <strong id="score-wrong">0</strong></span>
+                <span id="timer-copy" class="timer-copy hidden">남은 시간 <strong id="timer-remaining">--:--</strong></span>
               </div>
             </div>
             <div class="progress-track">
@@ -205,11 +221,12 @@
             <article id="explanation-card" class="explanation-card hidden">
               <div class="answer-pill" id="answer-pill">정답 1번</div>
               <p id="explanation-text" class="explanation-text"></p>
-              <div id="source-chip" class="source-chip"></div>
+              <button id="source-chip" class="source-chip" type="button"></button>
             </article>
 
             <div class="quiz-actions">
-              <button id="check-answer" class="primary-button" type="button">정답 확인</button>
+              <button id="prev-question" class="secondary-button" type="button">이전 문제</button>
+              <button id="check-answer" class="primary-button" type="button">답 보기 / 채점</button>
               <button id="next-question" class="secondary-button hidden" type="button">다음 문제</button>
               <button id="finish-quiz" class="ghost-button" type="button">세션 종료</button>
             </div>
@@ -266,6 +283,6 @@
       </div>
     </div>
 
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./app.js?v=20261014-docx"></script>
   </body>
 </html>
